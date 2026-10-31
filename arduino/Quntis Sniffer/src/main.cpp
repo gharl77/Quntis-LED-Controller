@@ -1,27 +1,20 @@
-// Dedicated RF sniffer Firmware for Quntis Remote
+// =====================================================================
+//  QUNTIS LI-HY-0213-GY — MESURE RADIO 2,4 GHz (ESP32 DevKit V1)
 //
-// Wiring:
-//  CE=GPIO17,
-//  CSN=GPIO5,
-//  SCK=GPIO18,
-//  MOSI=GPIO23,
-//  MISO=GPIO19
+//  Cablage : CE=GPIO17  CSN=GPIO5  SCK=GPIO18  MOSI=GPIO23  MISO=GPIO19
 //
-// Usage:
-// Open serial monitor at 115200 baud (e.g. https://terminal.spacehuhn.com/)
-// Press button on your Quntis remote repeatedly while next to the NRF24L01.
+//  LED bleue de la carte : allumee = appuyer, eteinte = ne pas toucher,
+//  clignotement rapide = changement de phase, ne rien compter.
 //
-// The Quintis remote sends 6 identical packets in a burst for each button press,
-// if we detected those duplicates the address will be printed along with the payload
-//
-//  Duplicate packet detected (10ms apart)!
-//  ────────────────────────────────────
-//  Raw:     49 80 4A CB A5 BC 8B 3F 81 FC 88 CF E5
-//  Address: 0x20 0x21 0x01 0x31 0xAA
-//  Data:    0x00 0x76 0x9A 0x31 0x4A 0x20
-//
-// The address is unique per remote and is what need to copy over to QuntisControl.h
-// to be able to control your LED bar.
+//  COMMANDES (terminees par Entree)
+//    i                     etat du module
+//    a<paires>             balayage alterne silence/appuis, ex: a3
+//    l<canal>,<debit>,<n>  ecoute de <n> paires de phases, ex: l85,0,3
+//                          debit : 0 = 1 Mbps, 1 = 2 Mbps, 2 = 250 kbps
+//    r<canal>,<debit>,<n>  comme l, mais envoie toutes les trames captees
+//    s<canal>,<secondes>   ecoute calee sur la synchro XN297, ex: s80,10
+//    t<canal>,<n>,<hex>    emet <n> fois les octets bruts apres la synchro
+// =====================================================================
 
 #include <Arduino.h>
 #include <RF24.h>
@@ -29,213 +22,372 @@
 
 #define CE_PIN 17
 #define CSN_PIN 5
+#define LED_PIN 2
 
 RF24 radio(CE_PIN, CSN_PIN);
 
-// XN297 scramble table (from XN297 protocol reverse engineering)
-static const uint8_t xn297_scramble[] = {
-    0xe3, 0xb1, 0x4b, 0xea, 0x85, 0xbc, 0xe5, 0x66,
-    0x0d, 0xae, 0x8c, 0x88, 0x12, 0x69, 0xee, 0x1f,
-    0xc7, 0x62, 0x97, 0xd5, 0x0b, 0x79, 0xca, 0xcc,
-    0x1b, 0x5d, 0x19, 0x10, 0x24, 0xd3, 0xdc, 0x3f};
+const uint8_t N_CH = 126;
+const uint16_t DWELL_MS = 300;
+const uint32_t LISTEN_PHASE_MS = 8000;
+const uint32_t WARNING_MS = 3000;
+const uint8_t PREFIX_LEN = 4;
+const uint8_t FRAME_LEN = 32;
+const uint8_t MAX_PREFIXES = 96;
+const uint8_t MAX_REPORTED = 12;
 
-// XN297 CRC table
-static const uint16_t xn297_crc_xorout[] = {
-    0x0000, 0x3d5f, 0xa6f1, 0x3a23, 0xaa16, 0x1caf,
-    0x62b2, 0xe0eb, 0x0821, 0xbe07, 0x5f1a, 0xaf15,
-    0x4f01, 0xad16, 0x5f31, 0x7a56, 0x1b71, 0x0a33,
-    0x7e44, 0xae90};
+const rf24_datarate_e RATES[3] = {RF24_1MBPS, RF24_2MBPS, RF24_250KBPS};
+const char *RATE_NAME[3] = {"1M", "2M", "250K"};
 
-static uint16_t crc16_update(uint16_t crc, uint8_t byte, uint8_t bits) {
-    crc ^= (uint16_t)byte << 8;
-    for (uint8_t i = 0; i < bits; i++) {
-        if (crc & 0x8000)
-            crc = (crc << 1) ^ 0x1021;
-        else
-            crc <<= 1;
+struct PrefixEntry {
+    uint8_t frame[FRAME_LEN];
+    uint16_t counts[2];  // 0 = silence, 1 = appuis
+};
+
+struct RawFrame {
+    uint32_t ms;
+    uint8_t pass;
+    uint8_t data[FRAME_LEN];
+};
+
+const uint16_t MAX_RAW_FRAMES = 2400;
+RawFrame *rawFrames = nullptr;
+
+PrefixEntry prefixes[MAX_PREFIXES];
+uint8_t prefixCount = 0;
+uint16_t perMille[N_CH];
+
+char cmdBuf[96];
+uint8_t cmdLen = 0;
+
+// ------------------------------------------------- phases et LED
+
+void warnPhaseChange() {
+    unsigned long started = millis();
+    while (millis() - started < WARNING_MS) {
+        digitalWrite(LED_PIN, (millis() / 100) % 2);
+        delay(10);
     }
-    return crc;
 }
 
-static uint8_t bit_reverse(uint8_t b) {
-    b = ((b & 0xF0) >> 4) | ((b & 0x0F) << 4);
-    b = ((b & 0xCC) >> 2) | ((b & 0x33) << 2);
-    b = ((b & 0xAA) >> 1) | ((b & 0x55) << 1);
-    return b;
+void beginPhase(uint8_t phase) {
+    warnPhaseChange();
+    digitalWrite(LED_PIN, phase == 1 ? HIGH : LOW);
 }
 
-// Descramble and decode a captured XN297 packet
-// Input: raw[] = 13 bytes captured after the 3-byte NRF24 address match
-//        (5 scrambled addr bytes + 6 scrambled data bytes + 2 CRC bytes)
-// Output: prints decoded address and payload
-void decodePacket(const uint8_t* raw, int len) {
-    if (len < 13) return;
+// ------------------------------------------------- balayage d'energie
 
-    // Descramble the 5 address bytes
-    // XN297 address is scrambled with XOR and sent MSByte first (reversed from NRF24 perspective)
-    uint8_t addr[5];
-    for (int i = 0; i < 5; i++) {
-        addr[4 - i] = raw[i] ^ xn297_scramble[i];
-    }
+void radioBase(uint8_t rateIdx) {
+    radio.stopListening();
+    radio.setAutoAck(false);
+    radio.disableCRC();
+    radio.setRetries(0, 0);
+    radio.setDataRate(RATES[rateIdx]);
+}
 
-    // Descramble the 6 data bytes
-    // XN297 data is scrambled AND bit-reversed
-    uint8_t data[6];
-    for (int i = 0; i < 6; i++) {
-        uint8_t b = raw[5 + i] ^ xn297_scramble[5 + i];
-        data[i] = bit_reverse(b);
+uint16_t sampleChannel(uint8_t ch) {
+    radio.setChannel(ch);
+    uint32_t samples = 0, hits = 0;
+    unsigned long started = millis();
+    while (millis() - started < DWELL_MS) {
+        radio.startListening();
+        delayMicroseconds(140);
+        radio.stopListening();
+        if (radio.testRPD()) hits++;
+        samples++;
     }
+    return samples == 0 ? 0 : (uint16_t)((hits * 1000UL) / samples);
+}
 
-    Serial.println("────────────────────────────────────");
-    Serial.print("  Raw:     ");
-    for (int i = 0; i < 13; i++) {
-        Serial.printf("%02X ", raw[i]);
+void autoScan(uint8_t pairs) {
+    radioBase(0);
+    radio.setAddressWidth(3);
+    radio.setPayloadSize(32);
+    Serial.printf("SCAN,start,%u,%u\n", pairs, DWELL_MS);
+    for (uint16_t pass = 0; pass < pairs * 2; pass++) {
+        uint8_t phase = pass % 2;
+        beginPhase(phase);
+        for (uint8_t ch = 0; ch < N_CH; ch++) perMille[ch] = sampleChannel(ch);
+        Serial.printf("PASS,%u,%c", pass, phase == 1 ? 'P' : 'S');
+        for (uint8_t ch = 0; ch < N_CH; ch++) Serial.printf(",%u", perMille[ch]);
+        Serial.println();
     }
-    Serial.println();
+    digitalWrite(LED_PIN, LOW);
+    Serial.println("SCAN,end");
+}
 
-    Serial.print("  Address: ");
-    for (int i = 0; i < 5; i++) {
-        Serial.printf("0x%02X ", addr[i]);
-    }
-    Serial.println();
+// ------------------------------------------------- ecoute universelle
 
-    Serial.print("  Data:    ");
-    for (int i = 0; i < 6; i++) {
-        Serial.printf("0x%02X ", data[i]);
+bool isUniformPrefix(const uint8_t *frame) {
+    for (uint8_t i = 1; i < PREFIX_LEN; i++) {
+        if (frame[i] != frame[0]) return false;
     }
-    Serial.println();
+    return frame[0] == 0x00 || frame[0] == 0xFF;
+}
+
+void tallyFrame(const uint8_t *frame, uint8_t phase) {
+    if (isUniformPrefix(frame)) return;
+    for (uint8_t i = 0; i < prefixCount; i++) {
+        if (memcmp(prefixes[i].frame, frame, PREFIX_LEN) == 0) {
+            prefixes[i].counts[phase]++;
+            return;
+        }
+    }
+    // Table pleine : on remplace une entree vue une seule fois.
+    uint8_t slot = prefixCount;
+    if (prefixCount < MAX_PREFIXES) {
+        prefixCount++;
+    } else {
+        slot = MAX_PREFIXES;
+        for (uint8_t i = 0; i < MAX_PREFIXES; i++) {
+            if (prefixes[i].counts[0] + prefixes[i].counts[1] <= 1) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot == MAX_PREFIXES) return;
+    }
+    memcpy(prefixes[slot].frame, frame, FRAME_LEN);
+    prefixes[slot].counts[0] = 0;
+    prefixes[slot].counts[1] = 0;
+    prefixes[slot].counts[phase] = 1;
+}
+
+void reportPrefixes() {
+    bool reported[MAX_PREFIXES] = {false};
+    for (uint8_t shown = 0; shown < MAX_REPORTED; shown++) {
+        int16_t best = -1;
+        uint16_t bestCount = 1;
+        for (uint8_t i = 0; i < prefixCount; i++) {
+            uint16_t total = prefixes[i].counts[0] + prefixes[i].counts[1];
+            if (!reported[i] && total > bestCount) {
+                bestCount = total;
+                best = i;
+            }
+        }
+        if (best < 0) return;
+        reported[best] = true;
+        Serial.printf("TOP,%u,%u,", prefixes[best].counts[0], prefixes[best].counts[1]);
+        for (uint8_t b = 0; b < FRAME_LEN; b++) Serial.printf("%02X", prefixes[best].frame[b]);
+        Serial.println();
+    }
+}
+
+void openPromiscuous(uint8_t ch, uint8_t rateIdx) {
+    radioBase(rateIdx);
+    radio.setChannel(ch);
+    radio.setAddressWidth(2);
+    uint8_t pipe0[2] = {0x00, 0xAA};
+    uint8_t pipe1[2] = {0x00, 0x55};
+    radio.openReadingPipe(0, pipe0);
+    radio.openReadingPipe(1, pipe1);
+    radio.setPayloadSize(FRAME_LEN);
+}
+
+// Garde toutes les trames en memoire, puis les envoie apres la capture
+// pour que l'ecriture serie ne fasse pas perdre de paquets.
+void capture(uint8_t ch, uint8_t rateIdx, uint8_t pairs) {
+    openPromiscuous(ch, rateIdx);
+    uint16_t stored = 0;
+    uint32_t dropped = 0;
+    Serial.printf("CAPTURE,start,%u,%s,%u\n", ch, RATE_NAME[rateIdx], pairs);
+    for (uint16_t pass = 0; pass < pairs * 2; pass++) {
+        uint8_t phase = pass % 2;
+        radio.stopListening();
+        beginPhase(phase);
+        radio.flush_rx();
+        radio.startListening();
+        unsigned long started = millis();
+        while (millis() - started < LISTEN_PHASE_MS) {
+            if (!radio.available()) continue;
+            uint8_t frame[FRAME_LEN];
+            radio.read(frame, FRAME_LEN);
+            if (stored == MAX_RAW_FRAMES) {
+                dropped++;
+                continue;
+            }
+            rawFrames[stored].ms = millis();
+            rawFrames[stored].pass = pass;
+            memcpy(rawFrames[stored].data, frame, FRAME_LEN);
+            stored++;
+        }
+    }
+    radio.stopListening();
+    digitalWrite(LED_PIN, LOW);
+    for (uint16_t i = 0; i < stored; i++) {
+        Serial.printf("RAW,%lu,%u,", rawFrames[i].ms, rawFrames[i].pass);
+        for (uint8_t b = 0; b < FRAME_LEN; b++) Serial.printf("%02X", rawFrames[i].data[b]);
+        Serial.println();
+    }
+    Serial.printf("CAPTURE,end,%u,%lu\n", stored, dropped);
+}
+
+void listen(uint8_t ch, uint8_t rateIdx, uint8_t pairs) {
+    openPromiscuous(ch, rateIdx);
+    prefixCount = 0;
+
+    uint32_t frames[2] = {0, 0};
+    Serial.printf("LISTEN,start,%u,%s,%u\n", ch, RATE_NAME[rateIdx], pairs);
+    for (uint16_t pass = 0; pass < pairs * 2; pass++) {
+        uint8_t phase = pass % 2;
+        radio.stopListening();
+        beginPhase(phase);
+        radio.flush_rx();
+        radio.startListening();
+        unsigned long started = millis();
+        while (millis() - started < LISTEN_PHASE_MS) {
+            if (radio.available()) {
+                uint8_t frame[FRAME_LEN];
+                radio.read(frame, FRAME_LEN);
+                frames[phase]++;
+                tallyFrame(frame, phase);
+            }
+        }
+    }
+    radio.stopListening();
+    digitalWrite(LED_PIN, LOW);
+    Serial.printf("FRAMES,%lu,%lu,%u\n", frames[0], frames[1], prefixCount);
+    reportPrefixes();
+    Serial.println("LISTEN,end");
+}
+
+// ------------------------------------------------- commandes
+
+void printInfo() {
+    Serial.printf("INFO,connected=%d,plus=%d\n", radio.isChipConnected(), radio.isPVariant());
+}
+
+// ------------------------------------------------- protocole XN297
+
+// L'adresse se donne a l'envers : a l'antenne, cela donne 71 0F 55.
+const uint8_t XN297_SYNC[3] = {0x55, 0x0F, 0x71};
+const uint8_t SNIFF_LEN = 24;
+const uint16_t TX_GAP_MS = 4;
+
+void openXn297(uint8_t ch, uint8_t payloadLen) {
+    radioBase(0);
+    radio.setPALevel(RF24_PA_MAX);
+    radio.setChannel(ch);
+    radio.setAddressWidth(3);
+    radio.setPayloadSize(payloadLen);
+}
+
+void sniffSync(uint8_t ch, uint16_t seconds) {
+    openXn297(ch, SNIFF_LEN);
+    radio.openReadingPipe(1, XN297_SYNC);
+    radio.flush_rx();
+    radio.startListening();
+    digitalWrite(LED_PIN, HIGH);
+    Serial.printf("SNIFF,start,%u,%u\n", ch, seconds);
+    unsigned long started = millis();
+    while (millis() - started < seconds * 1000UL) {
+        if (!radio.available()) continue;
+        uint8_t frame[SNIFF_LEN];
+        radio.read(frame, SNIFF_LEN);
+        Serial.printf("PKT,%lu,", millis() - started);
+        for (uint8_t b = 0; b < SNIFF_LEN; b++) Serial.printf("%02X", frame[b]);
+        Serial.println();
+    }
+    radio.stopListening();
+    digitalWrite(LED_PIN, LOW);
+    Serial.println("SNIFF,end");
+}
+
+void transmitRaw(uint8_t ch, uint16_t count, const char *hex) {
+    size_t hexLen = strlen(hex);
+    if (hexLen == 0 || hexLen % 2 != 0 || hexLen / 2 > 32) {
+        Serial.println("ERR,hex invalide");
+        return;
+    }
+    uint8_t len = hexLen / 2;
+    uint8_t payload[32];
+    for (uint8_t i = 0; i < len; i++) {
+        char pair[3] = {hex[i * 2], hex[i * 2 + 1], 0};
+        payload[i] = (uint8_t)strtol(pair, nullptr, 16);
+    }
+    openXn297(ch, len);
+    radio.openWritingPipe(XN297_SYNC);
+    digitalWrite(LED_PIN, HIGH);
+    for (uint16_t i = 0; i < count; i++) {
+        radio.write(payload, len);
+        delay(TX_GAP_MS);
+    }
+    digitalWrite(LED_PIN, LOW);
+    Serial.printf("TX,end,%u,%u\n", ch, count);
+}
+
+void handleCommand(const char *cmd) {
+    if (cmd[0] == 'i') {
+        printInfo();
+    } else if (cmd[0] == 's') {
+        int ch = 0, seconds = 0;
+        if (sscanf(cmd + 1, "%d,%d", &ch, &seconds) != 2 || ch < 0 || ch >= N_CH || seconds < 1 ||
+            seconds > 120) {
+            Serial.println("ERR,format s<canal>,<secondes>");
+            return;
+        }
+        sniffSync((uint8_t)ch, (uint16_t)seconds);
+    } else if (cmd[0] == 't') {
+        int ch = 0, count = 0, consumed = 0;
+        if (sscanf(cmd + 1, "%d,%d,%n", &ch, &count, &consumed) != 2 || consumed == 0 || ch < 0 ||
+            ch >= N_CH || count < 1 || count > 200) {
+            Serial.println("ERR,format t<canal>,<n>,<hex>");
+            return;
+        }
+        transmitRaw((uint8_t)ch, (uint16_t)count, cmd + 1 + consumed);
+    } else if (cmd[0] == 'a') {
+        int pairs = atoi(cmd + 1);
+        if (pairs < 1 || pairs > 10) {
+            Serial.println("ERR,paires 1-10");
+            return;
+        }
+        autoScan((uint8_t)pairs);
+    } else if (cmd[0] == 'l' || cmd[0] == 'r') {
+        int ch = 0, rateIdx = 0, pairs = 0;
+        if (sscanf(cmd + 1, "%d,%d,%d", &ch, &rateIdx, &pairs) != 3 || ch < 0 || ch >= N_CH ||
+            rateIdx < 0 || rateIdx > 2 || pairs < 1 || pairs > 10) {
+            Serial.println("ERR,format l<canal>,<debit>,<paires>");
+            return;
+        }
+        if (cmd[0] == 'l') {
+            listen((uint8_t)ch, (uint8_t)rateIdx, (uint8_t)pairs);
+        } else {
+            capture((uint8_t)ch, (uint8_t)rateIdx, (uint8_t)pairs);
+        }
+    } else {
+        Serial.println("ERR,commande inconnue");
+    }
 }
 
 void setup() {
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
     Serial.begin(115200);
-    delay(1000);
-
-    Serial.println();
-    Serial.println("╔══════════════════════════════════════════╗");
-    Serial.println("║  QUNTIS REMOTE SNIFFER (Bare - No WiFi)  ║");
-    Serial.println("╚══════════════════════════════════════════╝");
-    Serial.println();
-
-    if (!radio.begin(CE_PIN, CSN_PIN)) {
-        Serial.println("[ERROR] NRF24L01 not found! Check wiring.");
-        while (1) {
-            delay(1000);
-        }
+    delay(1200);
+    if (!radio.begin()) {
+        Serial.println("ERR,NRF24L01 introuvable");
+        while (true) delay(1000);
     }
-
-    Serial.println("[OK] NRF24L01 initialized");
-
-    // Configure for XN297 packet reception
-    radio.setChannel(2);            // Quntis uses channel 2 (2402 MHz)
-    radio.setDataRate(RF24_1MBPS);  // 1 Mbps
-    radio.setAutoAck(false);        // No auto-ack
-    radio.disableCRC();             // XN297 has its own CRC
-    radio.setRetries(0, 0);         // No retries
-
-    // Use 3-byte address to match end of XN297 preamble
-    // XN297 preamble ends with: ...0x71 0x0F 0x55
-    // NRF24L01 absorbs 0x55 as part of its own preamble, so we match on
-    // the remaining bytes. NRF24L01 expects address LSByte first on SPI,
-    // but openReadingPipe handles this.
-    radio.setAddressWidth(3);
-    radio.setPayloadSize(13);  // 5 scrambled addr + 6 scrambled data + 2 CRC
-
-    // The XN297 preamble after NRF24's 0x55 absorption:
-    // Over the air: ...0x71 0x0F 0x55 [address bytes...]
-    // NRF24 sees 0x55 as preamble, then matches address bytes
-    uint8_t rxAddr[] = {0x71, 0x0F, 0x55};
-    radio.openReadingPipe(0, rxAddr);
-
-    // Also try pipe 1 with alternate byte order
-    uint8_t rxAddr2[] = {0x55, 0x0F, 0x71};
-    radio.openReadingPipe(1, rxAddr2);
-
-    radio.startListening();
-    radio.printPrettyDetails();
-
-    Serial.println();
-    Serial.println("╔═══════════════════════════════════════════════╗");
-    Serial.println("║  READY TO SNIFF                               ║");
-    Serial.println("║                                               ║");
-    Serial.println("║  1. Hold Quntis remote CLOSE to NRF24 module  ║");
-    Serial.println("║  2. Press ONE button repeatedly               ║");
-    Serial.println("║  3. Look for CONFIRMED packets below          ║");
-    Serial.println("║                                               ║");
-    Serial.println("║  Packets with valid CRC = real Quntis data    ║");
-    Serial.println("║  Press 'r' to restart sniffing                ║");
-    Serial.println("╚═══════════════════════════════════════════════╝");
-    Serial.println();
+    rawFrames = (RawFrame *)malloc(sizeof(RawFrame) * MAX_RAW_FRAMES);
+    if (rawFrames == nullptr) {
+        Serial.println("ERR,memoire insuffisante");
+        while (true) delay(1000);
+    }
+    printInfo();
+    Serial.println("READY");
 }
 
-// Duplicate detection state
-uint8_t lastBuf[13] = {0};
-unsigned long lastTime = 0;
-bool haveLast = false;
-int totalPackets = 0;
-int confirmedPackets = 0;
-int crcValidPackets = 0;
-unsigned long lastStatusTime = 0;
-
 void loop() {
-    if (Serial.available()) {
+    while (Serial.available()) {
         char c = Serial.read();
-        if (c == 'r' || c == 'R') {
-            Serial.println("\n[Sniffer] Resetting counters...\n");
-            totalPackets = 0;
-            confirmedPackets = 0;
-            crcValidPackets = 0;
-            haveLast = false;
-            memset(lastBuf, 0, sizeof(lastBuf));
+        if (c == '\r' || c == '\n') {
+            if (cmdLen > 0) {
+                cmdBuf[cmdLen] = 0;
+                cmdLen = 0;
+                handleCommand(cmdBuf);
+            }
+        } else if (cmdLen < sizeof(cmdBuf) - 1) {
+            cmdBuf[cmdLen++] = c;
         }
     }
-
-    if (millis() - lastStatusTime > 10000) {
-        lastStatusTime = millis();
-        Serial.printf("[Status] Total: %d | Duplicates: %d | CRC valid: %d | Listening...\n",
-                      totalPackets, confirmedPackets, crcValidPackets);
-    }
-
-    if (radio.available()) {
-        uint8_t buf[13];
-        radio.read(buf, 13);
-        totalPackets++;
-
-        unsigned long now = millis();
-
-        // Duplicate detection: Quntis sends 6 identical packets within ~30ms
-        // A real packet will have at least 2 copies arriving within 100ms
-        if (haveLast && (now - lastTime) < 100) {
-            // Compare all 13 bytes for exact match
-            bool match = true;
-            for (int i = 0; i < 13; i++) {
-                if (buf[i] != lastBuf[i]) {
-                    match = false;
-                    break;
-                }
-            }
-
-            if (match) {
-                confirmedPackets++;
-                Serial.printf("\nDuplicate packet detected (%lums apart)!\n", now - lastTime);
-
-                decodePacket(buf, 13);
-
-                // Skip remaining duplicates from printing
-                haveLast = false;
-                delay(200);
-                while (radio.available()) {
-                    uint8_t discard[13];
-                    radio.read(discard, 13);
-                }
-                return;
-            }
-        }
-
-        // Save for next comparison
-        memcpy(lastBuf, buf, 13);
-        lastTime = now;
-        haveLast = true;
-    }
-
-    delay(0);
+    delay(5);
 }

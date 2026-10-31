@@ -87,3 +87,33 @@ Make sure it is on then press the **Calibrate** switch. This calibration walks i
 
 Have fun and enjoy your new smart light 💡🎉
 
+
+## Quntis LI-HY-0213-GY
+
+This model uses the same XN297 framing as the PRO+, but on channel 80 (2480 MHz) at 1 Mbps. It also has a different packet, which carries absolute values, so it has its own `quntis_0213` component. It has been tested on one lamp and remote only.
+
+After the `71 0F 55` sync, a packet holds a 5-byte address, then these decoded bytes:
+
+```
+[remote id x4] [command] [brightness] [color temp] [backlight] 00 [counter] [sum]
+```
+
+The bytes are followed by a CRC-16 (poly `0x1021`, init `0xB5D2`, xor `0xF494`) over the raw address and data, then `AF`.
+
+| Command | Button |
+|---|---|
+| `31` | Power |
+| `32` | Backlight |
+| `30`, `34` | Brightness mode, color temperature mode |
+| `35`, `36` | Brightness up, down |
+| `39`, `3A` | Color temperature up, down |
+| `40`, `3E` | Automatic dimming on, off |
+
+To set it up:
+
+1. Flash `arduino/Quntis Sniffer` and send `s80,10` over serial while pressing a button on your remote.
+2. In `PKT` lines, the first 5 bytes are your `device_address`.
+3. Decode the next 4 bytes to get your `remote_id`: XOR them with `BC E5 66 0D`, then reverse the bits of each byte.
+4. Put these values in `example-esphome-0213-config.yaml`, then flash it with ESPHome.
+
+Stop other 2.4 GHz devices near the sniffer if you see no packets: one of them can hide the remote.
