@@ -188,4 +188,4 @@ For `<rate>`, use `0` for 1 Mbps, `1` for 2 Mbps or `2` for 250 kbps. This firmw
 - [bluemaex](https://github.com/bluemaex/Quntis-LED-Controller) ported that work to the ESP32 and ESPHome.
 - The LI-HY-0213-GY work was done by [gharl77](https://github.com/gharl77) with [Claude Code](https://claude.com/claude-code).
 
-The MQTT and PRO+ ESPHome code from the original project are still in this repository, and are documented in [its README](https://github.com/bluemaex/Quntis-LED-Controller#readme).
+The MQTT and PRO+ ESPHome code from the original project are in [its repository](https://github.com/bluemaex/Quntis-LED-Controller).
