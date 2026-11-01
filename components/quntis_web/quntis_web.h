@@ -25,7 +25,8 @@ namespace esphome {
             void setup() override;
             void loop() override;
             void dump_config() override;
-            float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
+            // Sets up after WiFi and just before web_server, so requests reach this handler first.
+            float get_setup_priority() const override { return setup_priority::WIFI - 0.5f; }
 
             void set_light(light::LightState* light) { light_ = light; }
 

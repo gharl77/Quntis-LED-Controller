@@ -37,6 +37,11 @@ captive_portal:
 quntis_web:
   light_id: lampe
 
+# Adds the "Visit" link in Home Assistant. The quntis_web page answers the requests.
+web_server:
+  port: 80
+  version: 1
+
 # WiFi setup over Bluetooth, while the ESP32 is not connected.
 esp32_ble:
   name: "Lampe Quntis"

@@ -5,9 +5,11 @@
 #include <esp_wifi.h>
 
 #include <cmath>
-#include <cstring>
 
 #include "esphome/components/quntis_0213/quntis_0213.h"
+#ifdef USE_CAPTIVE_PORTAL
+#include "esphome/components/captive_portal/captive_portal.h"
+#endif
 #include "esphome/components/wifi/scan_list.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include "esphome/core/application.h"
@@ -122,16 +124,32 @@ namespace esphome {
         }
 
         bool QuntisWeb::canHandle(AsyncWebServerRequest* request) const {
-            // Without a connection, the captive portal serves its own WiFi page instead.
-            if (!wifi::global_wifi_component->is_connected()) {
-                return false;
+            // Connected, this page answers everything, so web_server's own API stays closed.
+            if (wifi::global_wifi_component->is_connected()) {
+                return true;
             }
-            char buffer[AsyncWebServerRequest::URL_BUF_SIZE];
-            StringRef url = request->url_to(buffer);
-            return url == "/" || std::strncmp(url.c_str(), "/api/", 5) == 0;
+#ifdef USE_CAPTIVE_PORTAL
+            // Otherwise web_server would hide the captive portal's WiFi page.
+            auto* portal = captive_portal::global_captive_portal;
+            return portal != nullptr && portal->is_active() && request->method() == HTTP_GET;
+#else
+            return false;
+#endif
         }
 
         void QuntisWeb::handleRequest(AsyncWebServerRequest* request) {
+            if (!wifi::global_wifi_component->is_connected()) {
+#ifdef USE_CAPTIVE_PORTAL
+                auto* portal = captive_portal::global_captive_portal;
+                if (portal != nullptr && portal->is_active()) {
+                    portal->handleRequest(request);
+                    return;
+                }
+#endif
+                request->send(404);
+                return;
+            }
+
             char buffer[AsyncWebServerRequest::URL_BUF_SIZE];
             StringRef url = request->url_to(buffer);
 

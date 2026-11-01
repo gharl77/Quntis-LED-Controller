@@ -5,32 +5,21 @@ from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
 from esphome.const import CONF_ID, CONF_LIGHT_ID
 from esphome.core import coroutine_with_priority, CoroPriority
 
-DEPENDENCIES = ["wifi"]
-AUTO_LOAD = ["quntis_0213", "socket", "web_server_base"]
+# web_server is what makes Home Assistant show the "Visit" link. It also reserves the sockets
+# a browser needs. QuntisWeb answers the requests in its place.
+DEPENDENCIES = ["web_server", "wifi"]
+AUTO_LOAD = ["quntis_0213", "web_server_base"]
 
 quntis_web_ns = cg.esphome_ns.namespace("quntis_web")
 QuntisWeb = quntis_web_ns.class_("QuntisWeb", cg.Component)
 
-
-def _consume_web_sockets(config):
-    # A browser keeps several connections open. Without this reservation they use up the
-    # ESP32's sockets, and new connections fail, including Home Assistant's.
-    from esphome.components import socket
-
-    socket.consume_sockets(5, "quntis_web")(config)
-    return config
-
-
-CONFIG_SCHEMA = cv.All(
-    cv.Schema(
-        {
-            cv.GenerateID(): cv.declare_id(QuntisWeb),
-            cv.GenerateID(CONF_WEB_SERVER_BASE_ID): cv.use_id(web_server_base.WebServerBase),
-            cv.Required(CONF_LIGHT_ID): cv.use_id(light.LightState),
-        }
-    ).extend(cv.COMPONENT_SCHEMA),
-    _consume_web_sockets,
-)
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(QuntisWeb),
+        cv.GenerateID(CONF_WEB_SERVER_BASE_ID): cv.use_id(web_server_base.WebServerBase),
+        cv.Required(CONF_LIGHT_ID): cv.use_id(light.LightState),
+    }
+).extend(cv.COMPONENT_SCHEMA)
 
 
 @coroutine_with_priority(CoroPriority.WEB)

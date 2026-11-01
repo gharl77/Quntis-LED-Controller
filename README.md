@@ -44,7 +44,13 @@ The lamp accepts absolute values, so there is no step counting and no calibratio
 
 ## The lamp's own web page
 
-The ESP32 also serves its own page, so the lamp works without Home Assistant. Open `http://<ESP32 address>/` or `http://quntis-0213.local/`.
+The ESP32 also serves its own page, so the lamp works without Home Assistant. Open `http://<ESP32 address>/` or `http://quntis-0213.local/`. In Home Assistant, the **Visit** link on the device page opens it too.
+
+<img src="Images/LI-HY-0213-GY_WebPage.png" alt="The lamp's web page, with its light controls, information and WiFi panel" width="360">
+
+*The page with its WiFi panel open. The network names and addresses are sample data.*
+
+The page is available in French and English. It follows the browser's language, and the menu at the top changes it.
 
 | Section | What it does |
 |---|---|
