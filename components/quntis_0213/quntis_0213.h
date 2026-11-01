@@ -34,6 +34,7 @@ namespace esphome {
                 miso_pin_ = miso;
             }
             void set_channel(uint8_t channel) { channel_ = channel; }
+            uint8_t get_channel() const { return channel_; }
             void set_device_address(const std::vector<uint8_t>& address) { device_address_ = address; }
             void set_device_id(const std::vector<uint8_t>& id) { device_id_ = id; }
 

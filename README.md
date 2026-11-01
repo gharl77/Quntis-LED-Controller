@@ -42,6 +42,21 @@ The remote has these controls:
 
 The lamp accepts absolute values, so there is no step counting and no calibration. Brightness and color temperature are not limited to the remote's presets. Home Assistant goes down to the remote's lowest level, about 10 %, because lower levels have not been tested.
 
+## The lamp's own web page
+
+The ESP32 also serves its own page, so the lamp works without Home Assistant. Open `http://<ESP32 address>/` or `http://quntis-0213.local/`.
+
+| Section | What it does |
+|---|---|
+| Light | On/off, brightness, color temperature with presets, backlight and automatic dimming |
+| Information | Network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address and ESPHome version, plus a restart button |
+| Change WiFi | Opens from a link under Information: scans nearby networks, then saves a new network and password |
+
+If the ESP32 cannot join a network, there are two ways to set the WiFi:
+
+- **Backup network:** after about a minute, connect to the `Lampe Quntis` WiFi with your `ap_password`. A page lists the nearby networks.
+- **Bluetooth:** use [Improv WiFi](https://www.improv-wifi.com/) from Chrome or Edge, or Home Assistant's Bluetooth discovery. Bluetooth only sets the WiFi: a web page cannot be served over it, so the page itself needs the network.
+
 ## What you need
 
 - A DOIT ESP32 DevKit V1, or another ESP32 if you adapt the pins
@@ -95,6 +110,7 @@ Then create a `secrets.yaml` file next to it:
 ```yaml
 wifi_ssid: "your network"
 wifi_password: "your password"
+ap_password: "at least 8 characters, for the backup network"
 ```
 
 The example config loads the component from the local `components` folder. To build it from another folder, point `external_components` to this repository.
@@ -179,7 +195,8 @@ For `<rate>`, use `0` for 1 Mbps, `1` for 2 Mbps or `2` for 250 kbps. This firmw
 - **After a restart:** Home Assistant shows everything as off, and the ESP32 sends nothing until the next command.
 - **Automatic dimming:** the brightness slider does not show the real level while this mode is on. The switch needs the lamp to be on, and it also turns on the backlight, like the remote.
 - **Backlight:** this is on or off only. The remote's continuous adjustment is not supported.
-- **Security:** the example config uses no API encryption or OTA password. Anyone on your network could control the lamp or update the ESP32. Add both if your network is shared.
+- **Saved WiFi:** a network saved from the page or over Bluetooth replaces the one in `secrets.yaml`, including after a firmware update.
+- **Security:** the example config uses no API encryption or OTA password, and the web page has no password. Anyone on your network could control the lamp, change its WiFi or update the ESP32, and anyone nearby can set its WiFi over Bluetooth while it is disconnected. Add API encryption and an OTA password if your network is shared.
 - **Coexistence:** other 2.4 GHz devices may interfere. Running it next to a second ESP32 has not been tested after setup.
 
 ## Credits

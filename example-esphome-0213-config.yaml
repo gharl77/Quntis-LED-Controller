@@ -15,7 +15,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [ quntis_0213 ]
+    components: [ quntis_0213, quntis_web ]
 
 logger:
 
@@ -27,6 +27,22 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # Backup network, started when the ESP32 cannot join the WiFi.
+  ap:
+    ssid: "Lampe Quntis"
+    password: !secret ap_password
+
+captive_portal:
+
+quntis_web:
+  light_id: lampe
+
+# WiFi setup over Bluetooth, while the ESP32 is not connected.
+esp32_ble:
+  name: "Lampe Quntis"
+
+improv_ble:
+  authorizer: none
 
 light:
   - platform: quntis_0213
