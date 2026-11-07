@@ -58,6 +58,11 @@ esp32_ble:
 improv_ble:
   authorizer: none
 
+# The time of day, for "Température selon l'heure".
+time:
+  - platform: homeassistant
+    id: heure
+
 light:
   - platform: quntis_0213
     id: lampe
@@ -67,6 +72,7 @@ light:
     restore_mode: RESTORE_DEFAULT_OFF
     # Fades between levels, like a smart bulb. Set 0s to change at once.
     default_transition_length: 1s
+    time_id: heure
     on_remote:
       - lambda: 'id(telecommande).trigger(button);'
 
@@ -102,6 +108,15 @@ switch:
       - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->set_auto_dim(true);'
     turn_off_action:
       - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->set_auto_dim(false);'
+  - platform: template
+    name: "Température selon l'heure"
+    icon: mdi:theme-light-dark
+    restore_mode: DISABLED
+    lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_auto_temperature();'
+    turn_on_action:
+      - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->set_auto_temperature(true);'
+    turn_off_action:
+      - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->set_auto_temperature(false);'
 
 # One event per press on the remote, for Home Assistant automations.
 event:
@@ -111,7 +126,24 @@ event:
     icon: mdi:remote
     device_class: button
     event_types: [power, brightness, brightness_up, brightness_down, temperature, temperature_up,
-      temperature_down, backlight, auto_dim, button_33, other]
+      temperature_down, backlight, auto_dim, other,
+      power_long, brightness_long, brightness_up_long, brightness_down_long, temperature_long,
+      temperature_up_long, temperature_down_long, backlight_long, auto_dim_long, other_long]
+
+# Turns the lamp off after this many minutes. 0 cancels.
+number:
+  - platform: template
+    name: "Minuterie"
+    icon: mdi:timer-outline
+    unit_of_measurement: min
+    min_value: 0
+    max_value: 240
+    step: 5
+    mode: box
+    update_interval: 30s
+    lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_timer_minutes();'
+    set_action:
+      - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->start_timer((uint32_t) x);'
 
 button:
   - platform: template
@@ -120,6 +152,22 @@ button:
     entity_category: config
     on_press:
       - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->start_learning();'
+  # Presets: buttons without a category also show on the web page.
+  - platform: template
+    name: "Lecture"
+    icon: mdi:book-open-variant
+    on_press:
+      - light.turn_on: { id: lampe, brightness: 100%, color_temperature: 5000 K }
+  - platform: template
+    name: "Écran"
+    icon: mdi:monitor
+    on_press:
+      - light.turn_on: { id: lampe, brightness: 60%, color_temperature: 4000 K }
+  - platform: template
+    name: "Soir"
+    icon: mdi:weather-night
+    on_press:
+      - light.turn_on: { id: lampe, brightness: 30%, color_temperature: 3000 K }
 
 sensor:
   - platform: template
@@ -136,3 +184,31 @@ sensor:
     accuracy_decimals: 0
     update_interval: 5s
     lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_presses_received();'
+  - platform: template
+    name: "Durée du dernier appui"
+    icon: mdi:timer-sand
+    entity_category: diagnostic
+    unit_of_measurement: ms
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_last_press_ms();'
+  - platform: template
+    name: "Paquets du dernier appui"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_last_press_packets();'
+
+# The last remote packet: command, brightness, color temperature and backlight.
+text_sensor:
+  - platform: template
+    name: "Dernier paquet de la télécommande"
+    icon: mdi:code-brackets
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      auto *v = static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->last_remote_values();
+      char text[12];
+      snprintf(text, sizeof(text), "%02X %02X %02X %02X", v[0], v[1], v[2], v[3]);
+      return std::string(text);

@@ -1,0 +1,204 @@
+blueprint:
+  name: Quntis remote actions
+  description: >-
+    Runs your own actions when a button is pressed or held on the Quntis LI-HY-0213-GY remote.
+    The lamp still reacts to the remote as usual. Leave a button empty to do nothing more.
+    Holding a button also repeats some short presses, as the remote steps the brightness or color temperature.
+  domain: automation
+  source_url: https://github.com/gharl77/Quntis-LED-Controller/blob/diagnostic/li-hy-0213-gy/blueprints/automation/quntis_remote.yaml
+  input:
+    remote:
+      name: Remote
+      description: The remote's event entity, named "Télécommande" in the example configuration.
+      selector:
+        entity:
+          filter:
+            - domain: event
+              integration: esphome
+    short_presses:
+      name: Short presses
+      collapsed: false
+      input:
+        power:
+          name: Power
+          default: []
+          selector:
+            action: {}
+        brightness:
+          name: Brightness button
+          default: []
+          selector:
+            action: {}
+        brightness_up:
+          name: Brightness +
+          default: []
+          selector:
+            action: {}
+        brightness_down:
+          name: Brightness −
+          default: []
+          selector:
+            action: {}
+        temperature:
+          name: Color temperature button
+          default: []
+          selector:
+            action: {}
+        temperature_up:
+          name: Color temperature +
+          default: []
+          selector:
+            action: {}
+        temperature_down:
+          name: Color temperature −
+          default: []
+          selector:
+            action: {}
+        backlight:
+          name: Backlight
+          default: []
+          selector:
+            action: {}
+        auto_dim:
+          name: Automatic dimming
+          default: []
+          selector:
+            action: {}
+    long_presses:
+      name: Long presses (held 1.5 s or more)
+      collapsed: true
+      input:
+        power_long:
+          name: Power
+          default: []
+          selector:
+            action: {}
+        brightness_long:
+          name: Brightness button
+          default: []
+          selector:
+            action: {}
+        brightness_up_long:
+          name: Brightness +
+          default: []
+          selector:
+            action: {}
+        brightness_down_long:
+          name: Brightness −
+          default: []
+          selector:
+            action: {}
+        temperature_long:
+          name: Color temperature button
+          default: []
+          selector:
+            action: {}
+        temperature_up_long:
+          name: Color temperature +
+          default: []
+          selector:
+            action: {}
+        temperature_down_long:
+          name: Color temperature −
+          default: []
+          selector:
+            action: {}
+        backlight_long:
+          name: Backlight
+          default: []
+          selector:
+            action: {}
+        auto_dim_long:
+          name: Automatic dimming
+          default: []
+          selector:
+            action: {}
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: state
+    entity_id: !input remote
+
+conditions:
+  # A reconnection also changes the state: only real presses count.
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none and trigger.from_state.state != 'unavailable'
+         and trigger.to_state.state not in ['unavailable', 'unknown'] }}
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'power' }}"
+        sequence: !input power
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'brightness' }}"
+        sequence: !input brightness
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'brightness_up' }}"
+        sequence: !input brightness_up
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'brightness_down' }}"
+        sequence: !input brightness_down
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'temperature' }}"
+        sequence: !input temperature
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'temperature_up' }}"
+        sequence: !input temperature_up
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'temperature_down' }}"
+        sequence: !input temperature_down
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'backlight' }}"
+        sequence: !input backlight
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'auto_dim' }}"
+        sequence: !input auto_dim
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'power_long' }}"
+        sequence: !input power_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'brightness_long' }}"
+        sequence: !input brightness_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'brightness_up_long' }}"
+        sequence: !input brightness_up_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'brightness_down_long' }}"
+        sequence: !input brightness_down_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'temperature_long' }}"
+        sequence: !input temperature_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'temperature_up_long' }}"
+        sequence: !input temperature_up_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'temperature_down_long' }}"
+        sequence: !input temperature_down_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'backlight_long' }}"
+        sequence: !input backlight_long
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'auto_dim_long' }}"
+        sequence: !input auto_dim_long

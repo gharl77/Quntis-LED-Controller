@@ -98,12 +98,12 @@ namespace esphome {
             char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
             get_mac_address_pretty_into_buffer(mac);
 
-            char buffer[640];
+            char buffer[720];
             snprintf(buffer, sizeof(buffer),
                      "{\"on\":%d,\"brightness\":%d,\"kelvin\":%d,\"backlight\":%d,\"auto_dim\":%d,"
                      "\"radio\":%d,\"channel\":%u,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\","
                      "\"uptime\":%u,\"heap\":%u,\"name\":\"%s\",\"version\":\"%s\",\"scanning\":%d,"
-                     "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d}",
+                     "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d,\"timer\":%u,\"auto_temp\":%d,\"clock\":%d}",
                      values.is_on(), (int) std::lround(values.get_brightness() * 100.0f),
                      (int) std::lround(1000000.0f / values.get_color_temperature()), output_()->get_backlight(),
                      output_()->get_auto_dim(), !output_()->is_failed(), output_()->get_channel(), escaped_ssid,
@@ -112,7 +112,9 @@ namespace esphome {
                      scanning_.load(), output_()->has_remote(), output_()->is_learning(),
                      output_()->last_remote_age(), std::max(1, (int) std::lround(output_()->get_min_level() * 100.0f / 255.0f)), output_()->last_remote_values()[0],
                      output_()->last_remote_values()[1], output_()->last_remote_values()[2],
-                     output_()->last_remote_values()[3], yaml_password_ != nullptr);
+                     output_()->last_remote_values()[3], yaml_password_ != nullptr,
+                     (unsigned) output_()->get_timer_minutes(), output_()->get_auto_temperature(),
+                     output_()->has_clock());
 
             LockGuard guard(state_lock_);
             state_json_ = buffer;
@@ -188,6 +190,8 @@ namespace esphome {
                     request->send(200, "application/json", json.c_str());
                 } else if (url == "/api/networks") {
                     handle_networks_(request);
+                } else if (url == "/api/presets") {
+                    handle_presets_(request);
                 } else {
                     request->send(404);
                 }
@@ -210,6 +214,31 @@ namespace esphome {
             } else if (url == "/api/auto_dim") {
                 bool on = request->arg("on") == "1";
                 defer([this, on]() { output_()->set_auto_dim(on); });
+                request->send(200);
+            } else if (url == "/api/preset") {
+                auto key = parse_number<uint32_t>(request->arg("key"));
+                if (!key.has_value()) {
+                    request->send(400);
+                    return;
+                }
+                defer([key]() {
+#ifdef USE_BUTTON
+                    for (auto* button : App.get_buttons()) {
+                        if (button->get_object_id_hash() == *key &&
+                            button->get_entity_category() == ENTITY_CATEGORY_NONE) {
+                            button->press();
+                        }
+                    }
+#endif
+                });
+                request->send(200);
+            } else if (url == "/api/timer") {
+                uint32_t minutes = parse_number<uint32_t>(request->arg("minutes")).value_or(0);
+                defer([this, minutes]() { output_()->start_timer(std::min<uint32_t>(minutes, 24 * 60)); });
+                request->send(200);
+            } else if (url == "/api/auto_temp") {
+                bool on = request->arg("on") == "1";
+                defer([this, on]() { output_()->set_auto_temperature(on); });
                 request->send(200);
             } else if (url == "/api/learn") {
                 defer([this]() { output_()->start_learning(); });
@@ -268,6 +297,27 @@ namespace esphome {
                     first = false;
                 }
             }
+            stream->print("]");
+            request->send(stream);
+        }
+
+        // Buttons without a category, such as "Lecture" or "Soir", are shown as presets.
+        void QuntisWeb::handle_presets_(AsyncWebServerRequest* request) {
+            AsyncResponseStream* stream = request->beginResponseStream("application/json");
+            stream->print("[");
+#ifdef USE_BUTTON
+            char escaped[64 * JSON_ESCAPE_MAX_EXPANSION + 1];
+            bool first = true;
+            for (auto* button : App.get_buttons()) {
+                if (button->get_entity_category() != ENTITY_CATEGORY_NONE) {
+                    continue;
+                }
+                json_escape_into_buffer(escaped, button->get_name());
+                stream->printf(R"(%s{"key":%u,"name":"%s"})", first ? "" : ",",
+                               (unsigned) button->get_object_id_hash(), escaped);
+                first = false;
+            }
+#endif
             stream->print("]");
             request->send(stream);
         }

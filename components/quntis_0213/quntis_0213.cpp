@@ -52,7 +52,21 @@ namespace esphome {
             uint8_t backlight_level;
             uint8_t backlight_on_level;
             uint8_t auto_dim;
+            uint8_t auto_temp;
         };
+
+        // A press ends when its packets stop for this long.
+        static const uint32_t PRESS_END_MS = 400;
+        // A short press lasts about 0.7 s. A held button keeps sending, either with the same counter
+        // or as new presses every 0.3 to 0.5 s.
+        static const uint32_t LONG_PRESS_MS = 1500;
+        static const uint32_t HOLD_GAP_MS = 600;
+        static const uint32_t AUTO_TEMP_INTERVAL_MS = 10000;
+        static const uint32_t AUTO_TEMP_FADE_MS = 5000;
+
+        // Color temperature through the day: hour, kelvin.
+        static const float AUTO_TEMP_CURVE[][2] = {{0, 3000},  {6, 3000},  {8, 4000},  {10, 5000}, {16, 5000},
+                                                   {18, 4000}, {20, 3200}, {22, 3000}, {24, 3000}};
 
         // The remote's four color temperature presets.
         static const float PRESET_KELVIN[4] = {3000.0f, 4000.0f, 5000.0f, 6500.0f};
@@ -90,17 +104,19 @@ namespace esphome {
 
         static const char* button_name(uint8_t command) {
             switch (command) {
+                // The brightness button sends 30 or 33.
                 case 0x30:
+                case 0x33:
                     return "brightness";
                 case 0x31:
                     return "power";
                 case 0x32:
                     return "backlight";
-                case 0x33:
-                    return "button_33";
                 case 0x34:
                     return "temperature";
+                // 37 is + held in brightness mode: the level rises step by step.
                 case 0x35:
+                case 0x37:
                     return "brightness_up";
                 case 0x36:
                     return "brightness_down";
@@ -139,6 +155,7 @@ namespace esphome {
                 backlight_level_ = saved.backlight_level;
                 backlight_on_level_ = saved.backlight_on_level != 0 ? saved.backlight_on_level : 0xFF;
                 auto_dim_on_ = saved.auto_dim == 1;
+                auto_temp_on_ = saved.auto_temp == 1;
             }
 
             SPI.begin(clk_pin_, miso_pin_, mosi_pin_, -1);
@@ -193,6 +210,12 @@ namespace esphome {
             // The value restored at boot, and the values taken from the remote, already match
             // what the lamp does, so they are not sent.
             bool syncing = syncing_until_ms_ != 0 && millis() < syncing_until_ms_;
+            bool automatic = auto_temp_until_ms_ != 0 && millis() < auto_temp_until_ms_;
+            // A color temperature chosen by hand stops following the time of day.
+            if (!first_write_ && !syncing && !automatic && auto_temp_on_ && target_temp_ != sent_temp_) {
+                auto_temp_on_ = false;
+                save_state_();
+            }
             if (first_write_ || syncing) {
                 first_write_ = false;
                 syncing_until_ms_ = 0;
@@ -206,6 +229,11 @@ namespace esphome {
 
         void Quntis0213Light::loop() {
             receive_();
+            if (press_packets_ != 0 && millis() - last_remote_ms_ > PRESS_END_MS) {
+                finish_press_();
+            }
+            check_timer_();
+            apply_auto_temperature_();
             if (!pending_ || millis() - last_send_ms_ < MIN_SEND_INTERVAL_MS) {
                 return;
             }
@@ -262,8 +290,109 @@ namespace esphome {
         }
 
         void Quntis0213Light::save_state_() {
-            StateSettings settings{backlight_level_, backlight_on_level_, (uint8_t) (auto_dim_on_ ? 1 : 0)};
+            StateSettings settings{backlight_level_, backlight_on_level_, (uint8_t) (auto_dim_on_ ? 1 : 0),
+                                   (uint8_t) (auto_temp_on_ ? 1 : 0)};
             state_pref_.save(&settings);
+        }
+
+        void Quntis0213Light::check_long_press_(uint8_t command, uint32_t now) {
+            if (long_press_sent_ || now - hold_start_ms_ < LONG_PRESS_MS) {
+                return;
+            }
+            long_press_sent_ = true;
+            std::string button = std::string(button_name(command)) + "_long";
+            ESP_LOGD(TAG, "Remote long press: %s", button.c_str());
+            for (auto* trigger : remote_triggers_) {
+                trigger->trigger(button);
+            }
+        }
+
+        void Quntis0213Light::finish_press_() {
+            last_press_ms_ = last_remote_ms_ - press_start_ms_;
+            last_press_packets_ = press_packets_;
+            press_packets_ = 0;
+        }
+
+        void Quntis0213Light::start_timer(uint32_t minutes) {
+            if (minutes == 0) {
+                timer_end_ms_ = 0;
+                ESP_LOGI(TAG, "Timer cancelled");
+                return;
+            }
+            // 0 means no timer, so a deadline that lands on 0 moves by 1 ms.
+            timer_end_ms_ = millis() + minutes * 60000UL;
+            if (timer_end_ms_ == 0) {
+                timer_end_ms_ = 1;
+            }
+            ESP_LOGI(TAG, "Lamp turns off in %u min", (unsigned) minutes);
+        }
+
+        uint32_t Quntis0213Light::get_timer_minutes() const {
+            if (timer_end_ms_ == 0) {
+                return 0;
+            }
+            int32_t left = (int32_t) (timer_end_ms_ - millis());
+            return left <= 0 ? 0 : (uint32_t) ((left + 59999) / 60000);
+        }
+
+        void Quntis0213Light::check_timer_() {
+            if (timer_end_ms_ == 0 || (int32_t) (millis() - timer_end_ms_) < 0) {
+                return;
+            }
+            timer_end_ms_ = 0;
+            ESP_LOGI(TAG, "Timer done: turning the lamp off");
+            if (get_backlight()) {
+                set_backlight(false);
+            }
+            if (state_ != nullptr) {
+                state_->make_call().set_state(false).perform();
+            }
+        }
+
+        bool Quntis0213Light::has_clock() const {
+#ifdef USE_TIME
+            return clock_ != nullptr;
+#else
+            return false;
+#endif
+        }
+
+        void Quntis0213Light::set_auto_temperature(bool on) {
+            auto_temp_on_ = on && has_clock();
+            auto_temp_check_ms_ = 0;
+            save_state_();
+        }
+
+        void Quntis0213Light::apply_auto_temperature_() {
+#ifdef USE_TIME
+            uint32_t now_ms = millis();
+            if (!auto_temp_on_ || clock_ == nullptr || state_ == nullptr || !sent_on_ ||
+                (auto_temp_check_ms_ != 0 && now_ms - auto_temp_check_ms_ < AUTO_TEMP_INTERVAL_MS)) {
+                return;
+            }
+            auto_temp_check_ms_ = now_ms;
+            ESPTime now = clock_->now();
+            if (!now.is_valid()) {
+                return;
+            }
+            float hour = now.hour + now.minute / 60.0f;
+            float kelvin = AUTO_TEMP_CURVE[0][1];
+            for (size_t i = 0; i + 1 < sizeof(AUTO_TEMP_CURVE) / sizeof(AUTO_TEMP_CURVE[0]); i++) {
+                if (hour <= AUTO_TEMP_CURVE[i + 1][0]) {
+                    float position = (hour - AUTO_TEMP_CURVE[i][0]) / (AUTO_TEMP_CURVE[i + 1][0] - AUTO_TEMP_CURVE[i][0]);
+                    kelvin = AUTO_TEMP_CURVE[i][1] + position * (AUTO_TEMP_CURVE[i + 1][1] - AUTO_TEMP_CURVE[i][1]);
+                    break;
+                }
+            }
+            if (std::fabs(byte_to_kelvin(sent_temp_) - kelvin) < 50.0f) {
+                return;
+            }
+            auto_temp_until_ms_ = now_ms + AUTO_TEMP_FADE_MS + 1000;
+            auto call = state_->make_call();
+            call.set_color_temperature(1000000.0f / kelvin);
+            call.set_transition_length(AUTO_TEMP_FADE_MS);
+            call.perform();
+#endif
         }
 
         void Quntis0213Light::start_learning() {
@@ -324,12 +453,26 @@ namespace esphome {
                 uint32_t now = millis();
                 if (data[9] == last_remote_counter_ && now - last_remote_ms_ < REMOTE_REPEAT_MS) {
                     last_remote_ms_ = now;
+                    press_packets_++;
+                    check_long_press_(data[4], now);
                     continue;
                 }
+                // A new press of the same button right after the last packet continues a hold.
+                if (data[4] != hold_command_ || now - last_remote_ms_ > HOLD_GAP_MS) {
+                    hold_command_ = data[4];
+                    hold_start_ms_ = now;
+                    long_press_sent_ = false;
+                }
+                if (press_packets_ != 0) {
+                    finish_press_();
+                }
+                press_start_ms_ = now;
+                press_packets_ = 1;
                 last_remote_counter_ = data[9];
                 last_remote_ms_ = now;
                 presses_received_++;
                 handle_remote_(data);
+                check_long_press_(data[4], now);
             }
         }
 
@@ -356,11 +499,15 @@ namespace esphome {
             if (command == COMMAND_AUTO_DIM_ON) {
                 auto_dim_on_ = true;
             } else if (command == COMMAND_AUTO_DIM_OFF || command == COMMAND_POWER || command == COMMAND_LEVEL_UP ||
-                       command == COMMAND_LEVEL_DOWN || command == COMMAND_BRIGHTNESS_MODE) {
+                       command == COMMAND_LEVEL_DOWN || command == COMMAND_BRIGHTNESS_MODE || command == 0x33 ||
+                       command == 0x37) {
                 auto_dim_on_ = false;
             }
             if (level == 0) {
                 auto_dim_on_ = false;
+            }
+            if (temp != sent_temp_ && command != COMMAND_POWER) {
+                auto_temp_on_ = false;
             }
             save_state_();
 

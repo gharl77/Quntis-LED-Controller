@@ -9,6 +9,9 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
+#ifdef USE_TIME
+#include "esphome/components/time/real_time_clock.h"
+#endif
 
 namespace esphome {
     namespace quntis_0213 {
@@ -44,6 +47,21 @@ namespace esphome {
             // Valid packets heard from any Quntis remote, and presses from this lamp's remote.
             uint32_t get_packets_received() const { return packets_received_; }
             uint32_t get_presses_received() const { return presses_received_; }
+            // How long the last press lasted, and how many packets it sent, to tell long presses apart.
+            uint32_t get_last_press_ms() const { return last_press_ms_; }
+            uint32_t get_last_press_packets() const { return last_press_packets_; }
+
+            // Turns the lamp off after this many minutes. 0 cancels.
+            void start_timer(uint32_t minutes);
+            uint32_t get_timer_minutes() const;
+
+            // Follows the time of day: warm at night, cool in the middle of the day.
+            void set_auto_temperature(bool on);
+            bool get_auto_temperature() const { return auto_temp_on_; }
+            bool has_clock() const;
+#ifdef USE_TIME
+            void set_time(time::RealTimeClock* clock) { clock_ = clock; }
+#endif
 
             void set_pins(uint8_t ce, uint8_t cs, uint8_t clk, uint8_t mosi, uint8_t miso) {
                 ce_pin_ = ce;
@@ -66,6 +84,10 @@ namespace esphome {
             void receive_();
             void handle_remote_(const uint8_t* data);
             void save_state_();
+            void finish_press_();
+            void check_long_press_(uint8_t command, uint32_t now);
+            void check_timer_();
+            void apply_auto_temperature_();
 
             uint8_t ce_pin_{17};
             uint8_t cs_pin_{5};
@@ -108,6 +130,24 @@ namespace esphome {
             uint8_t last_remote_values_[4]{};
             uint32_t packets_received_{0};
             uint32_t presses_received_{0};
+            uint32_t press_start_ms_{0};
+            uint32_t press_packets_{0};
+            // A held button repeats its press, with a new counter each time.
+            uint32_t hold_start_ms_{0};
+            uint8_t hold_command_{0};
+            bool long_press_sent_{false};
+            uint32_t last_press_ms_{0};
+            uint32_t last_press_packets_{0};
+
+            uint32_t timer_end_ms_{0};
+            bool auto_temp_on_{false};
+            uint32_t auto_temp_check_ms_{0};
+            // Set while the light entity takes the time-of-day temperature, so it is not mistaken for
+            // a manual change.
+            uint32_t auto_temp_until_ms_{0};
+#ifdef USE_TIME
+            time::RealTimeClock* clock_{nullptr};
+#endif
         };
 
         // Fires once per press on the remote, with the button's name.

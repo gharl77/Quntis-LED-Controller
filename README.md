@@ -43,14 +43,28 @@ The remote has these controls:
 | Automatic dimming switch | The lamp's automatic dimming |
 | Remote event | One event per press on the remote, to trigger your own automations |
 | Learn the remote button | Pairs the ESP32 with your remote |
-| Diagnostic counters | Radio packets received, and presses recognized from your remote |
+| Preset buttons | **Lecture**, **Écran** and **Soir** set a brightness and a color temperature in one press |
+| Timer | Turns the lamp off after a number of minutes. `0` cancels |
+| Time-of-day switch | Makes the light warm at night and cooler in the middle of the day |
+| Firmware update | Offers new versions of the ready-made firmware, with the quick install |
+| Diagnostic sensors | Radio packets received, presses recognized, the last press's length, and the last packet's values |
 
 - **Absolute values:** the lamp accepts any brightness and color temperature, not only the remote's presets. There is no step counting and no calibration.
 - **The remote stays in sync:** the ESP32 listens to the remote, so Home Assistant follows what you change with it.
 - **Fades:** brightness and color temperature change over 1 second, like a smart bulb. Set `default_transition_length: 0s` to change at once. How smooth this looks has not been checked.
 - **After a restart:** the ESP32 shows the last known state again.
+- **Timer and presets:** they run on the ESP32, so they work even when Home Assistant is down. Add your own presets as template buttons: each one also shows on the web page.
+- **Time of day:** the color temperature goes from 3000 K at night to 5000 K between 10:00 and 16:00, with smooth changes in between. Choosing a color temperature yourself turns this off. It needs the time from Home Assistant.
 
-The remote event has these types: `power`, `brightness`, `brightness_up`, `brightness_down`, `temperature`, `temperature_up`, `temperature_down`, `backlight`, `auto_dim`, `button_33` and `other`. In an automation, use the remote's event entity (**Télécommande** in the example) as the trigger, then check its `event_type` attribute. The lamp still reacts to the remote as usual.
+### Remote actions
+
+[![Open your Home Assistant instance and show the blueprint import dialog](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fgharl77%2FQuntis-LED-Controller%2Fblob%2Fdiagnostic%2Fli-hy-0213-gy%2Fblueprints%2Fautomation%2Fquntis_remote.yaml)
+
+The [Quntis remote actions](blueprints/automation/quntis_remote.yaml) blueprint lets you pick an action for each button, without writing YAML.
+
+The remote event has these types: `power`, `brightness`, `brightness_up`, `brightness_down`, `temperature`, `temperature_up`, `temperature_down`, `backlight`, `auto_dim` and `other`.
+
+Holding a button for 1.5 seconds also sends the same name with `_long`, such as `power_long`, once per hold. While a button is held, the remote also repeats short presses to step the brightness or color temperature. In an automation, use the remote's event entity (**Télécommande** in the example) as the trigger, then check its `event_type` attribute. The lamp still reacts to the remote as usual.
 
 ### The lamp's own web page
 
@@ -62,7 +76,7 @@ The ESP32 also serves its own page, so the lamp works without Home Assistant. In
 
 | Section | What it does |
 |---|---|
-| Light | On/off, brightness, color temperature with presets, backlight and automatic dimming |
+| Light | On/off, brightness, color temperature, backlight, automatic dimming, time of day, timer and your presets |
 | Information | Remote status, network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address and ESPHome version |
 | Learn the remote | Pairs the next remote heard |
 | Change WiFi | Scans nearby networks, then saves a new network and password |
@@ -99,7 +113,7 @@ Keep the module connected for good: it sends the commands to the lamp and hears 
 4. Open the lamp's page, click **Learn the remote**, then press a button on the remote right next to the module.
 5. Add the device in Home Assistant under **Settings → Devices & services**.
 
-This firmware has no page password and no update password, and its backup network uses the public password `quntis1234`. To change them, adopt the device in ESPHome Builder: it imports the configuration from this repository.
+Home Assistant then offers each new version of this firmware as an update. This firmware has no page password and no update password, and its backup network uses the public password `quntis1234`. To change them, adopt the device in ESPHome Builder: it imports the configuration from this repository.
 
 ## Manual install
 
@@ -136,6 +150,7 @@ The example loads the components from the local `components` folder. To build it
 | `device_address`, `remote_id` | Learned | Your remote's values, if you prefer to set them by hand |
 | `min_level` | `0x03` | The lowest brightness sent, about 1 %. The remote's lowest is `0x1A` |
 | `on_remote` | | An automation run on each press, with the button's name in `button` |
+| `time_id` | | A clock for the time-of-day mode, usually `platform: homeassistant` |
 
 ## If the WiFi stops working
 
@@ -193,20 +208,32 @@ After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes,
 
 | Command | Button |
 |---|---|
-| `30` | Brightness button |
+| `30`, `33` | Brightness button |
 | `31` | Power |
 | `32` | Backlight |
-| `33` | Unknown |
 | `34` | Color temperature button |
 | `35`, `36` | Brightness + and − |
+| `37` | Brightness + held: the level rises in steps up to `FF` |
 | `39`, `3A` | Color temperature + and − |
 | `40` | Automatic dimming |
 | `3E` | Automatic dimming off, from the ESP32 |
 
 - **Backlight button:** the remote always sends `FF`, and the lamp toggles its backlight. A packet from the ESP32 sets the value it carries.
 - **Automatic dimming:** the remote sends `40` on every press, and the mode stays on. Changing the brightness stops it.
+- **Modes:** + and − act on the last mode button pressed. In automatic dimming mode, they also send `40`.
+- **Held buttons:** the remote either keeps the same counter or sends a new press every 0.3 to 0.5 s.
 
 The manual lists brightness levels of 10, 50, 75 and 100 %. The captured values are closer to 10, 33, 66 and 100 %.
+
+## Other Quntis lamps
+
+Other Quntis models may use another channel, another address format or other values. If yours does not work:
+
+1. Flash the sniffer below and send `a3`, pressing a button whenever the blue LED is on. Note the busiest channel during presses.
+2. Send `s<channel>,10` and press power a few times, then brightness + and −.
+3. [Open an issue](https://github.com/gharl77/Quntis-LED-Controller/issues/new?template=other-lamp.yml) with both outputs and your model.
+
+If the packets start like this project's, try your channel in `channel:` and learn the remote first.
 
 ## Sniffer
 
@@ -228,8 +255,8 @@ For `<rate>`, use `0` for 1 Mbps, `1` for 2 Mbps or `2` for 250 kbps. To find th
 - **No feedback from the lamp:** the ESP32 knows what it sent and what it heard from the remote. It does not see the adjustments of automatic dimming, or the lamp turning off after a power cut.
 - **Missed presses:** a press far from the module, or while the ESP32 is sending, may not be heard.
 - **Full state in each packet:** a command also sends the brightness, color temperature and backlight the ESP32 knows about.
-- **Backlight:** this is on or off only. The remote may allow more, through the unknown `33` button.
-- **Not tested:** the backup network, Bluetooth WiFi setup, the installer page, and a second lamp or remote.
+- **Backlight:** this is on or off only, like on the remote.
+- **Not tested:** the backup network, Bluetooth WiFi setup, a full install and update from the installer page, and a second lamp or remote.
 - **Coexistence:** other 2.4 GHz devices may interfere.
 
 ## Credits

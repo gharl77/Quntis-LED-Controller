@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 from esphome import automation
 import esphome.config_validation as cv
-from esphome.components import light
+from esphome.components import light, time
 from esphome.const import (
     CONF_DEFAULT_TRANSITION_LENGTH,
     CONF_GAMMA_CORRECT,
@@ -21,6 +21,7 @@ CONF_DEVICE_ADDRESS = "device_address"
 CONF_REMOTE_ID = "remote_id"
 CONF_MIN_LEVEL = "min_level"
 CONF_ON_REMOTE = "on_remote"
+CONF_TIME_ID = "time_id"
 
 CONFIG_SCHEMA = (
     light.LIGHT_SCHEMA.extend(
@@ -45,6 +46,8 @@ CONFIG_SCHEMA = (
             ),
             # The remote's lowest level is 0x1A. The tested lamp stays steady down to 0x03, about 1 %.
             cv.Optional(CONF_MIN_LEVEL, default=0x03): cv.All(cv.hex_uint8_t, cv.Range(min=1, max=0xFF)),
+            # A clock for following the time of day, usually "platform: homeassistant".
+            cv.Optional(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
             # Runs once per press on the remote, with the button's name in "button".
             cv.Optional(CONF_ON_REMOTE): automation.validate_automation(
                 {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RemoteTrigger)}
@@ -72,6 +75,9 @@ async def to_code(config):
     ))
     cg.add(var.set_channel(config[CONF_CHANNEL]))
     cg.add(var.set_min_level(config[CONF_MIN_LEVEL]))
+    if CONF_TIME_ID in config:
+        clock = await cg.get_variable(config[CONF_TIME_ID])
+        cg.add(var.set_time(clock))
     for conf in config.get(CONF_ON_REMOTE, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trigger, [(cg.std_string, "button")], conf)

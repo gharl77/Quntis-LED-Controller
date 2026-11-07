@@ -56,6 +56,10 @@ a{color:var(--accent)}
 <div class="presets" id="presets"><button data-k="3000">3000 K</button><button data-k="4000">4000 K</button><button data-k="5000">5000 K</button><button data-k="6500">6500 K</button></div>
 <div class="row" style="margin-top:10px"><span data-t="backlight"></span><label class="switch"><input type="checkbox" id="backlight" data-a="backlight"><i></i></label></div>
 <div class="row"><span data-t="autoDim"></span><label class="switch"><input type="checkbox" id="auto_dim" data-a="autoDim"><i></i></label></div>
+<div class="row" id="autotemprow" hidden><span data-t="autoTemp"></span><label class="switch"><input type="checkbox" id="auto_temp" data-a="autoTemp"><i></i></label></div>
+<div class="row"><span><span data-t="timer"></span> <span class="value" id="timerleft"></span></span>
+<select id="timer" data-a="timer"><option value="0" data-t="timerOff"></option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 h</option><option value="120">2 h</option></select></div>
+<div class="presets" id="userpresets" hidden></div>
 <p class="note" data-t="note"></p>
 </section>
 
@@ -99,6 +103,7 @@ refused:'La lampe a refusé ces informations.',confirmRestart:"Redémarrer l'ESP
 remote:'Télécommande',remoteNone:'Non associée',remoteNever:'Associée, aucun signal depuis le démarrage',remoteSeen:a=>'Associée, dernier signal il y a '+ago(a),
 learn:'Apprendre la télécommande',learning:'Appuie sur un bouton de la télécommande, tout près du module…',learned:'Télécommande associée.',
 confirmLearn:"Apprendre une télécommande ? La prochaine télécommande Quntis entendue remplacera l'actuelle.",
+autoTemp:"Température selon l'heure",timer:'Éteindre dans',timerOff:'Jamais',timerLeft:m=>'(encore '+m+' min)',
 changePassword:'Changer le mot de passe',newPassword:'Nouveau mot de passe (8 caractères ou plus)',confirmPassword:'Confirme le mot de passe',savePassword:'Enregistrer le mot de passe',
 pwMismatch:'Les deux mots de passe ne sont pas identiques.',pwSaved:"Mot de passe changé. Ton navigateur va te le demander, avec l'utilisateur admin."},
 en:{light:'Light',lamp:'Lamp',brightness:'Brightness',temperature:'Color temperature',backlight:'Backlight',autoDim:'Automatic dimming',
@@ -114,6 +119,7 @@ refused:'The lamp refused this information.',confirmRestart:'Restart the ESP32?'
 remote:'Remote',remoteNone:'Not paired',remoteNever:'Paired, no signal since startup',remoteSeen:a=>'Paired, last signal '+ago(a)+' ago',
 learn:'Learn the remote',learning:'Press a button on the remote, right next to the module…',learned:'Remote paired.',
 confirmLearn:'Learn a remote? The next Quntis remote heard will replace the current one.',
+autoTemp:'Follow the time of day',timer:'Turn off in',timerOff:'Never',timerLeft:m=>'('+m+' min left)',
 changePassword:'Change password',newPassword:'New password (8 characters or more)',confirmPassword:'Confirm the password',savePassword:'Save the password',
 pwMismatch:'The two passwords are not the same.',pwSaved:'Password changed. Your browser will ask for it, with the user admin.'}};
 const $=id=>document.getElementById(id);
@@ -143,6 +149,8 @@ function render(s){
  const info=$('info');info.replaceChildren();
  for(const[k,v]of rows){const t=document.createElement('dt'),d=document.createElement('dd');t.textContent=k;d.textContent=v;info.append(t,d)}
  $('pwlinkbox').hidden=!s.auth;
+ $('autotemprow').hidden=!s.clock;$('timerleft').textContent=s.timer?T.timerLeft(s.timer):'';
+ if(Date.now()>busyUntil){$('auto_temp').checked=!!s.auto_temp;if(!s.timer)$('timer').value='0'}
  const lm=$('learnmsg');$('learn').disabled=!!s.learning;
  if(s.learning){lm.className='msg';lm.textContent=T.learning}else if(wasLearning){lm.textContent=s.remote?T.learned:''}
  wasLearning=!!s.learning;
@@ -175,6 +183,13 @@ $('wifi').onsubmit=async e=>{e.preventDefault();
  if(!confirm(T.confirmWifi(ssid)))return;
  try{const r=await post('/api/wifi',{ssid,password:pw});if(!r.ok)throw 0;$('password').value='';m.textContent=T.saved(location.hostname)}
  catch(e){m.className='msg bad';m.textContent=T.refused}};
+$('auto_temp').onchange=e=>send('/api/auto_temp',{on:e.target.checked?1:0});
+$('timer').onchange=e=>send('/api/timer',{minutes:e.target.value});
+async function presets(){
+ let list;try{list=await(await fetch('/api/presets')).json()}catch(e){return}
+ const box=$('userpresets');box.replaceChildren();box.hidden=!list.length;
+ for(const p of list){const b=document.createElement('button');b.type='button';b.textContent=p.name;b.onclick=()=>send('/api/preset',{key:p.key});box.append(b)}
+}
 $('pwopen').onclick=e=>{e.preventDefault();const p=$('pwpanel');p.hidden=false;p.scrollIntoView({behavior:'smooth'});$('pw1').focus()};
 $('pwclose').onclick=e=>{e.preventDefault();$('pwpanel').hidden=true;$('pw1').value=$('pw2').value=''};
 $('pwform').onsubmit=async e=>{e.preventDefault();
@@ -188,7 +203,7 @@ $('restart').onclick=()=>{if(confirm(T.confirmRestart))post('/api/restart').catc
 $('lang').onchange=e=>{try{localStorage.setItem('lang',e.target.value)}catch(err){}setLang(e.target.value)};
 let saved=null;try{saved=localStorage.getItem('lang')}catch(e){}
 setLang(TEXT[saved]?saved:(navigator.language||'').toLowerCase().startsWith('fr')?'fr':'en');
-labels();poll();setInterval(poll,2000);
+labels();poll();presets();setInterval(poll,2000);
 </script></body></html>)QUNTIS";
 
     }  // namespace quntis_web

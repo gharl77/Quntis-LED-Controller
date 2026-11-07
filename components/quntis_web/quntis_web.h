@@ -44,6 +44,7 @@ namespace esphome {
             void handle_networks_(AsyncWebServerRequest* request);
             void handle_wifi_(AsyncWebServerRequest* request);
             void handle_password_(AsyncWebServerRequest* request);
+            void handle_presets_(AsyncWebServerRequest* request);
 
             web_server_base::WebServerBase* base_;
             light::LightState* light_{nullptr};

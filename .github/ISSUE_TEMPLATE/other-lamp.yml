@@ -1,0 +1,48 @@
+name: Another Quntis lamp
+description: Report a Quntis lamp or remote that does not work, or works differently.
+title: "[Lamp] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping support more lamps. The section "Other Quntis lamps" in the README explains how to capture these values with the sniffer.
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Printed on the lamp or its box, such as LI-HY-0213-GY.
+    validations:
+      required: true
+  - type: input
+    id: product
+    attributes:
+      label: Product link
+      description: An Amazon or Quntis page for the lamp.
+  - type: dropdown
+    id: status
+    attributes:
+      label: What happens with this project
+      options:
+        - The remote is never learned
+        - The remote is learned, but the lamp does not react
+        - Some buttons or values behave differently
+        - Not tried yet
+    validations:
+      required: true
+  - type: textarea
+    id: scan
+    attributes:
+      label: Channel scan
+      description: Output of the sniffer's `a3` command, pressing a button whenever the blue LED is on.
+      render: text
+  - type: textarea
+    id: packets
+    attributes:
+      label: Captured packets
+      description: Output of `s<channel>,10` while you press power, then brightness + and −. Say which button each group of lines comes from.
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Buttons on the remote, what the manual says, or photos of the remote.

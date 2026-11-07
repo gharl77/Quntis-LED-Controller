@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -15,24 +15,60 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  VERSION: 1.1.${{ github.run_number }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install ESPHome
         run: pip install esphome==2026.10.2
       - name: Build the firmware from this commit
-        run: esphome -s components_source ../components compile firmware/lampe-quntis.yaml
+        run: esphome -s components_source ../components -s version "$VERSION" compile firmware/lampe-quntis.yaml
       - name: Prepare the installer site
         run: |
           mkdir -p site
           cp docs/* site/
-          cp "$(find firmware/.esphome/build/lampe-quntis -name firmware.factory.bin | head -1)" site/lampe-quntis.factory.bin
-      - uses: actions/upload-pages-artifact@v3
+          build=firmware/.esphome/build/lampe-quntis/build
+          cp "$build/firmware.factory.bin" site/lampe-quntis.factory.bin
+          cp "$build/firmware.ota.bin" site/lampe-quntis.ota.bin
+          python3 - <<'PY'
+          import hashlib, json, os
+          version = os.environ["VERSION"]
+          md5 = hashlib.md5(open("site/lampe-quntis.ota.bin", "rb").read()).hexdigest()
+          repo = os.environ["GITHUB_REPOSITORY"]
+          manifest = {
+              "name": "Lampe Quntis",
+              "version": version,
+              "home_assistant_domain": "esphome",
+              "new_install_prompt_erase": True,
+              "builds": [{
+                  "chipFamily": "ESP32",
+                  "improv": True,
+                  "parts": [{"path": "lampe-quntis.factory.bin", "offset": 0}],
+                  "ota": {
+                      "path": "lampe-quntis.ota.bin",
+                      "md5": md5,
+                      "summary": f"Lampe Quntis {version}",
+                      "release_url": f"https://github.com/{repo}/releases/tag/v{version}",
+                  },
+              }],
+          }
+          json.dump(manifest, open("site/manifest.json", "w"), indent=2)
+          PY
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" site/lampe-quntis.factory.bin site/lampe-quntis.ota.bin \
+            --target "$GITHUB_SHA" --title "Lampe Quntis $VERSION" \
+            --notes "Firmware built from ${GITHUB_SHA::7}. Install it from https://gharl77.github.io/Quntis-LED-Controller/ or update it from Home Assistant."
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -44,4 +80,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
