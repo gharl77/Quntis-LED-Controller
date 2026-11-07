@@ -4,7 +4,9 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "esphome/components/quntis_0213/quntis_0213.h"
 #ifdef USE_CAPTIVE_PORTAL
@@ -30,9 +32,26 @@ namespace esphome {
 
         static std::atomic<bool> scan_event_received{false};
 
+        struct PasswordSettings {
+            char password[65];
+            // The YAML password this one replaced. A new YAML password takes over again.
+            uint32_t yaml_hash;
+        };
+
         static void on_scan_done(void*, esp_event_base_t, int32_t, void*) { scan_event_received = true; }
 
         void QuntisWeb::setup() {
+#ifdef USE_WEBSERVER_AUTH
+            if (yaml_password_ != nullptr) {
+                password_pref_ = global_preferences->make_preference<PasswordSettings>(fnv1_hash("quntis_web_password"));
+                PasswordSettings saved{};
+                if (password_pref_.load(&saved) && saved.yaml_hash == fnv1_hash(yaml_password_) && saved.password[0] != 0) {
+                    std::memcpy(password_, saved.password, sizeof(password_));
+                    password_[sizeof(password_) - 1] = 0;
+                    base_->set_auth_password(password_);
+                }
+            }
+#endif
             base_->init();
             base_->add_handler(this);
         }
@@ -79,17 +98,21 @@ namespace esphome {
             char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
             get_mac_address_pretty_into_buffer(mac);
 
-            char buffer[512];
+            char buffer[640];
             snprintf(buffer, sizeof(buffer),
                      "{\"on\":%d,\"brightness\":%d,\"kelvin\":%d,\"backlight\":%d,\"auto_dim\":%d,"
                      "\"radio\":%d,\"channel\":%u,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\","
-                     "\"uptime\":%u,\"heap\":%u,\"name\":\"%s\",\"version\":\"%s\",\"scanning\":%d}",
+                     "\"uptime\":%u,\"heap\":%u,\"name\":\"%s\",\"version\":\"%s\",\"scanning\":%d,"
+                     "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d}",
                      values.is_on(), (int) std::lround(values.get_brightness() * 100.0f),
                      (int) std::lround(1000000.0f / values.get_color_temperature()), output_()->get_backlight(),
                      output_()->get_auto_dim(), !output_()->is_failed(), output_()->get_channel(), escaped_ssid,
                      ip, wifi_component->wifi_rssi(), mac, (unsigned) (millis() / 1000),
                      (unsigned) esp_get_free_heap_size(), App.get_friendly_name().c_str(), ESPHOME_VERSION,
-                     scanning_.load());
+                     scanning_.load(), output_()->has_remote(), output_()->is_learning(),
+                     output_()->last_remote_age(), std::max(1, (int) std::lround(output_()->get_min_level() * 100.0f / 255.0f)), output_()->last_remote_values()[0],
+                     output_()->last_remote_values()[1], output_()->last_remote_values()[2],
+                     output_()->last_remote_values()[3], yaml_password_ != nullptr);
 
             LockGuard guard(state_lock_);
             state_json_ = buffer;
@@ -188,11 +211,16 @@ namespace esphome {
                 bool on = request->arg("on") == "1";
                 defer([this, on]() { output_()->set_auto_dim(on); });
                 request->send(200);
+            } else if (url == "/api/learn") {
+                defer([this]() { output_()->start_learning(); });
+                request->send(200);
             } else if (url == "/api/scan") {
                 defer([this]() { start_scan_(); });
                 request->send(200);
             } else if (url == "/api/wifi") {
                 handle_wifi_(request);
+            } else if (url == "/api/password") {
+                handle_password_(request);
             } else if (url == "/api/restart") {
                 request->send(200);
                 set_timeout(500, []() { App.safe_reboot(); });
@@ -256,6 +284,29 @@ namespace esphome {
             request->send(200);
             // Lets the answer reach the browser before the connection changes.
             set_timeout(500, [ssid, password]() { wifi::global_wifi_component->save_wifi_sta(ssid, password); });
+        }
+
+        void QuntisWeb::handle_password_(AsyncWebServerRequest* request) {
+#ifdef USE_WEBSERVER_AUTH
+            std::string password = request->arg("password");
+            if (yaml_password_ == nullptr || password.size() < 8 || password.size() > 64) {
+                request->send(400);
+                return;
+            }
+            request->send(200);
+            defer([this, password]() {
+                PasswordSettings settings{};
+                std::strncpy(settings.password, password.c_str(), sizeof(settings.password) - 1);
+                settings.yaml_hash = fnv1_hash(yaml_password_);
+                password_pref_.save(&settings);
+                global_preferences->sync();
+                std::memcpy(password_, settings.password, sizeof(password_));
+                base_->set_auth_password(password_);
+                ESP_LOGI(TAG, "Web page password changed");
+            });
+#else
+            request->send(404);
+#endif
         }
 
     }  // namespace quntis_web

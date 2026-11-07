@@ -20,9 +20,13 @@ external_components:
 logger:
 
 api:
+  # No fixed key: Home Assistant sends one on its first connection, then only
+  # encrypted connections are accepted.
+  encryption: {}
 
 ota:
   platform: esphome
+  password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
@@ -40,7 +44,12 @@ quntis_web:
 # Adds the "Visit" link in Home Assistant. The quntis_web page answers the requests.
 web_server:
   port: 80
-  version: 1
+  version: 2
+  # Asks for a password before showing the page. The backup network's page stays open.
+  auth:
+    type: digest
+    username: admin
+    password: !secret web_password
 
 # WiFi setup over Bluetooth, while the ESP32 is not connected.
 esp32_ble:
@@ -53,8 +62,13 @@ light:
   - platform: quntis_0213
     id: lampe
     name: "Lampe"
-    # The lamp turns off when it loses power, and nothing is sent at boot.
-    restore_mode: ALWAYS_OFF
+    # Shows the last known state after a restart. A power cut turns the lamp off,
+    # so it can be wrong until the next command or remote press.
+    restore_mode: RESTORE_DEFAULT_OFF
+    # Fades between levels, like a smart bulb. Set 0s to change at once.
+    default_transition_length: 1s
+    on_remote:
+      - lambda: 'id(telecommande).trigger(button);'
 
     # DOIT ESP32 DevKit V1 wiring
     ce_pin: 17
@@ -63,10 +77,11 @@ light:
     spi_mosi_pin: 23
     spi_miso_pin: 19
 
-    # Replace with the values captured from your own remote: see the README.
     channel: 80
-    device_address: [0x00, 0x00, 0x00, 0x00, 0x00]
-    remote_id: [0x00, 0x00, 0x00, 0x00]
+    # Leave these out and use "Learn the remote" on the web page or in Home Assistant.
+    # To set them by hand instead, capture them with the sniffer: see the README.
+    # device_address: [0x00, 0x00, 0x00, 0x00, 0x00]
+    # remote_id: [0x00, 0x00, 0x00, 0x00]
 
 switch:
   - platform: template
@@ -87,3 +102,37 @@ switch:
       - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->set_auto_dim(true);'
     turn_off_action:
       - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->set_auto_dim(false);'
+
+# One event per press on the remote, for Home Assistant automations.
+event:
+  - platform: template
+    id: telecommande
+    name: "Télécommande"
+    icon: mdi:remote
+    device_class: button
+    event_types: [power, brightness, brightness_up, brightness_down, temperature, temperature_up,
+      temperature_down, backlight, auto_dim, button_33, other]
+
+button:
+  - platform: template
+    name: "Apprendre la télécommande"
+    icon: mdi:remote
+    entity_category: config
+    on_press:
+      - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->start_learning();'
+
+sensor:
+  - platform: template
+    name: "Paquets radio reçus"
+    icon: mdi:radio-tower
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_packets_received();'
+  - platform: template
+    name: "Appuis de la télécommande"
+    icon: mdi:gesture-tap-button
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_presses_received();'

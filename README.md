@@ -30,38 +30,46 @@ The remote has these controls:
 | Backlight button | Turns the backlight on or off |
 | Automatic dimming button | Lets the lamp adjust its brightness to the room, when the lamp is on |
 
-## What you get in Home Assistant
+## What you get
+
+### In Home Assistant
 
 ![The lamp in Home Assistant](Images/LI-HY-0213-GY_HomeAssistant.png)
 
-| Entity | Controls |
+| Entity | What it does |
 |---|---|
-| Light | On/off, brightness, and color temperature from 3000 to 6500 K |
+| Light | On/off, brightness from 1 to 100 %, and color temperature from 3000 to 6500 K |
 | Backlight switch | The backlight, independently of the main light |
 | Automatic dimming switch | The lamp's automatic dimming |
+| Remote event | One event per press on the remote, to trigger your own automations |
+| Learn the remote button | Pairs the ESP32 with your remote |
+| Diagnostic counters | Radio packets received, and presses recognized from your remote |
 
-The lamp accepts absolute values, so there is no step counting and no calibration. Brightness and color temperature are not limited to the remote's presets. Home Assistant goes down to the remote's lowest level, about 10 %, because lower levels have not been tested.
+- **Absolute values:** the lamp accepts any brightness and color temperature, not only the remote's presets. There is no step counting and no calibration.
+- **The remote stays in sync:** the ESP32 listens to the remote, so Home Assistant follows what you change with it.
+- **Fades:** brightness and color temperature change over 1 second, like a smart bulb. Set `default_transition_length: 0s` to change at once. How smooth this looks has not been checked.
+- **After a restart:** the ESP32 shows the last known state again.
 
-## The lamp's own web page
+The remote event has these types: `power`, `brightness`, `brightness_up`, `brightness_down`, `temperature`, `temperature_up`, `temperature_down`, `backlight`, `auto_dim`, `button_33` and `other`. In an automation, use the remote's event entity (**Télécommande** in the example) as the trigger, then check its `event_type` attribute. The lamp still reacts to the remote as usual.
 
-The ESP32 also serves its own page, so the lamp works without Home Assistant. Open `http://<ESP32 address>/` or `http://quntis-0213.local/`. In Home Assistant, the **Visit** link on the device page opens it too.
+### The lamp's own web page
+
+The ESP32 also serves its own page, so the lamp works without Home Assistant. In Home Assistant, the **Visit** link on the device page opens it. You can also open `http://<ESP32 address>/`.
 
 <img src="Images/LI-HY-0213-GY_WebPage.png" alt="The lamp's web page, with its light controls, information and WiFi panel" width="360">
 
 *The page with its WiFi panel open. The network names and addresses are sample data.*
 
-The page is available in French and English. It follows the browser's language, and the menu at the top changes it.
-
 | Section | What it does |
 |---|---|
 | Light | On/off, brightness, color temperature with presets, backlight and automatic dimming |
-| Information | Network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address and ESPHome version, plus a restart button |
-| Change WiFi | Opens from a link under Information: scans nearby networks, then saves a new network and password |
+| Information | Remote status, network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address and ESPHome version |
+| Learn the remote | Pairs the next remote heard |
+| Change WiFi | Scans nearby networks, then saves a new network and password |
+| Change password | Replaces the page's password |
+| Restart | Restarts the ESP32 |
 
-If the ESP32 cannot join a network, there are two ways to set the WiFi:
-
-- **Backup network:** after about a minute, connect to the `Lampe Quntis` WiFi with your `ap_password`. A page lists the nearby networks.
-- **Bluetooth:** use [Improv WiFi](https://www.improv-wifi.com/) from Chrome or Edge, or Home Assistant's Bluetooth discovery. Bluetooth only sets the WiFi: a web page cannot be served over it, so the page itself needs the network.
+The page is in French and English. It follows the browser's language, and the menu at the top changes it.
 
 ## What you need
 
@@ -81,53 +89,69 @@ If the ESP32 cannot join a network, there are two ways to set the WiFi:
 | MISO | GPIO19 (D19) |
 | IRQ | Not connected |
 
-## Setup
+Keep the module connected for good: it sends the commands to the lamp and hears the remote.
 
-### 1. Capture your remote's values
+## Quick install
 
-1. Open `arduino/Quntis Sniffer` in PlatformIO and flash it.
-2. Open the serial monitor at 115200 baud.
-3. Send `s80,10`. The blue LED lights up for 10 seconds.
-4. Hold the remote about 1 cm from the module and press power repeatedly.
+1. Wire the module, then plug the ESP32 into a computer.
+2. Open the [installer page](https://gharl77.github.io/Quntis-LED-Controller/) in Chrome or Edge, then click **Install**.
+3. When it asks, choose your WiFi network and enter its password.
+4. Open the lamp's page, click **Learn the remote**, then press a button on the remote right next to the module.
+5. Add the device in Home Assistant under **Settings → Devices & services**.
 
-You should see lines like this:
+This firmware has no page password and no update password, and its backup network uses the public password `quntis1234`. To change them, adopt the device in ESPHome Builder: it imports the configuration from this repository.
 
-```
-PKT,784,AABBCCDDEE1122334455...
-```
+## Manual install
 
-- The first 5 bytes after the timestamp are your `device_address`.
-- The next 4 bytes give your `remote_id`: XOR them with `BC E5 66 0D`, then reverse the bits of each byte.
+Use this to change the pins, the names, or the passwords.
 
-If nothing shows up, turn off other 2.4 GHz devices nearby. A second ESP32 hid the remote during development. If your unit does not use channel 80, send `a3` and press a button whenever the blue LED is on: it prints the activity of every channel, with and without presses.
+1. Copy `example-esphome-0213-config.yaml` to a new file.
+2. Create a `secrets.yaml` file next to it:
 
-### 2. Configure ESPHome
+   ```yaml
+   wifi_ssid: "your network"
+   wifi_password: "your password"
+   ap_password: "at least 8 characters, for the backup network"
+   ota_password: "a password for firmware updates"
+   web_password: "a password for the web page"
+   ```
 
-Copy `example-esphome-0213-config.yaml` to a new file and replace these values:
+3. Flash it over USB the first time:
 
-```yaml
-channel: 80
-device_address: [0x00, 0x00, 0x00, 0x00, 0x00]
-remote_id: [0x00, 0x00, 0x00, 0x00]
-```
+   ```bash
+   uvx --python 3.12 esphome run your-config.yaml
+   ```
 
-Then create a `secrets.yaml` file next to it:
+4. Learn the remote from the page or from Home Assistant, as in the quick install.
 
-```yaml
-wifi_ssid: "your network"
-wifi_password: "your password"
-ap_password: "at least 8 characters, for the backup network"
-```
+The page asks for the user `admin` and your `web_password`. If you change it from the page, the new password stays until you change `web_password` in `secrets.yaml` and flash again.
 
-The example config loads the component from the local `components` folder. To build it from another folder, point `external_components` to this repository.
+The example loads the components from the local `components` folder. To build it from another folder, point `external_components` to this repository. The components were tested with ESPHome 2026.10. A newer release shows a warning when building, and it may need changes.
 
-### 3. Flash and add it to Home Assistant
+### Options
 
-```bash
-uvx --python 3.12 esphome run your-config.yaml
-```
+| Option | Default | What it does |
+|---|---|---|
+| `channel` | `80` | The radio channel. See the sniffer if your unit uses another one |
+| `device_address`, `remote_id` | Learned | Your remote's values, if you prefer to set them by hand |
+| `min_level` | `0x03` | The lowest brightness sent, about 1 %. The remote's lowest is `0x1A` |
+| `on_remote` | | An automation run on each press, with the button's name in `button` |
 
-Use a 2.4 GHz network that can reach Home Assistant. Then add the device under **Settings → Devices & services**, if it is not discovered automatically. Once it works, you can power the ESP32 from a USB charger near the lamp.
+## If the WiFi stops working
+
+If the ESP32 cannot join a network for about a minute, it starts its own WiFi, `Lampe Quntis`. Connect to it with your `ap_password`, or `quntis1234` with the quick install. A page then lists nearby networks.
+
+While it is disconnected, you can also set the WiFi over Bluetooth with [Improv WiFi](https://www.improv-wifi.com/) in Chrome or Edge, or from Home Assistant's Bluetooth discovery.
+
+A network saved from the page, the backup network or Bluetooth replaces the one in `secrets.yaml`, even after a firmware update.
+
+## Security
+
+- **Home Assistant connection:** it is encrypted. Home Assistant sends the key on its first connection, and the ESP32 then refuses unencrypted connections. `esphome logs` then needs that key too.
+- **Firmware updates:** they need your `ota_password`, or the key that Home Assistant sent.
+- **Web page:** in the manual install, it needs the user `admin` and a password. The backup network's page stays open, but that network has its own password.
+- **Bluetooth:** anyone nearby can set the WiFi while the ESP32 is disconnected.
+- **Commands from other websites:** the page refuses them, even from a browser that is signed in to it.
 
 ## How it was reverse engineered
 
@@ -150,7 +174,7 @@ What finally worked:
 
 ## Protocol
 
-The radio settings are channel 80 (2480 MHz), 1 Mbps, one-way, with the nRF24 CRC disabled. The remote repeats each packet in short bursts.
+The radio settings are channel 80 (2480 MHz), 1 Mbps, with the nRF24 CRC disabled. The lamp only receives. The remote sends each press about 14 times, with the same counter.
 
 After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes, a 2-byte CRC, then `AF`. To decode a data byte, XOR it with the XN297 scramble table, then reverse its bits.
 
@@ -160,7 +184,7 @@ After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes,
 
 | Field | Values |
 |---|---|
-| Brightness | `00` turns off the main light. The remote uses `1A`, `55`, `A9` and `FF`. |
+| Brightness | `00` turns off the main light. The remote uses `1A`, `55`, `A9` and `FF`. The tested lamp stays steady down to `03`. |
 | Color temperature | The remote uses `00`, `47`, `A2` and `FF`, from warmest to coldest. |
 | Backlight | `00` off, `FF` on. |
 | Counter | Goes up with each press. |
@@ -172,16 +196,21 @@ After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes,
 | `30` | Brightness button |
 | `31` | Power |
 | `32` | Backlight |
+| `33` | Unknown |
 | `34` | Color temperature button |
 | `35`, `36` | Brightness + and − |
 | `39`, `3A` | Color temperature + and − |
-| `40`, `3E` | Automatic dimming on and off |
+| `40` | Automatic dimming |
+| `3E` | Automatic dimming off, from the ESP32 |
+
+- **Backlight button:** the remote always sends `FF`, and the lamp toggles its backlight. A packet from the ESP32 sets the value it carries.
+- **Automatic dimming:** the remote sends `40` on every press, and the mode stays on. Changing the brightness stops it.
 
 The manual lists brightness levels of 10, 50, 75 and 100 %. The captured values are closer to 10, 33, 66 and 100 %.
 
-## Sniffer commands
+## Sniffer
 
-Send these to `arduino/Quntis Sniffer` over serial at 115200 baud.
+You no longer need the sniffer to pair a remote. It remains useful if your unit does not use channel 80, or to study the protocol. Open `arduino/Quntis Sniffer` in PlatformIO, flash it, then send these commands over serial at 115200 baud.
 
 | Command | What it does |
 |---|---|
@@ -192,18 +221,16 @@ Send these to `arduino/Quntis Sniffer` over serial at 115200 baud.
 | `s<channel>,<seconds>` | Prints packets that use the XN297 sync |
 | `t<channel>,<count>,<hex>` | Sends raw bytes after the XN297 sync |
 
-For `<rate>`, use `0` for 1 Mbps, `1` for 2 Mbps or `2` for 250 kbps. This firmware replaces the project's original PRO+ sniffer on this branch.
+For `<rate>`, use `0` for 1 Mbps, `1` for 2 Mbps or `2` for 250 kbps. To find the channel, send `a3` and press a button whenever the blue LED is on. Turn off other 2.4 GHz devices nearby: a second ESP32 hid the remote during development.
 
 ## Limitations
 
-- **No feedback:** the lamp never reports its state. If you use the remote, Home Assistant does not know.
-- **Full state in each packet:** a command also sends the brightness, color temperature and backlight Home Assistant knows about.
-- **After a restart:** Home Assistant shows everything as off, and the ESP32 sends nothing until the next command.
-- **Automatic dimming:** the brightness slider does not show the real level while this mode is on. The switch needs the lamp to be on, and it also turns on the backlight, like the remote.
-- **Backlight:** this is on or off only. The remote's continuous adjustment is not supported.
-- **Saved WiFi:** a network saved from the page or over Bluetooth replaces the one in `secrets.yaml`, including after a firmware update.
-- **Security:** the example config uses no API encryption or OTA password, and the web page has no password. Anyone on your network could control the lamp, change its WiFi or update the ESP32, and anyone nearby can set its WiFi over Bluetooth while it is disconnected. Add API encryption and an OTA password if your network is shared.
-- **Coexistence:** other 2.4 GHz devices may interfere. Running it next to a second ESP32 has not been tested after setup.
+- **No feedback from the lamp:** the ESP32 knows what it sent and what it heard from the remote. It does not see the adjustments of automatic dimming, or the lamp turning off after a power cut.
+- **Missed presses:** a press far from the module, or while the ESP32 is sending, may not be heard.
+- **Full state in each packet:** a command also sends the brightness, color temperature and backlight the ESP32 knows about.
+- **Backlight:** this is on or off only. The remote may allow more, through the unknown `33` button.
+- **Not tested:** the backup network, Bluetooth WiFi setup, the installer page, and a second lamp or remote.
+- **Coexistence:** other 2.4 GHz devices may interfere.
 
 ## Credits
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lampe Quntis installer</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<style>
+:root{color-scheme:light;--bg:#f6f6f4;--card:#fff;--text:#1d1f23;--dim:#5d636d;--line:#dfe1e5;--accent:#c97400}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#14161a;--card:#1f2228;--text:#eef0f3;--dim:#9aa0aa;--line:#30343c;--accent:#ffb454}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
+main{max-width:640px;margin:auto;padding:24px 16px 48px}
+h1{font-size:26px;margin:0 0 4px}
+h2{font-size:18px;margin:0 0 8px}
+p,li{color:var(--dim)}
+section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:16px}
+ol{padding-left:20px;margin:0}
+li{margin:6px 0}
+a{color:var(--accent)}
+code{background:var(--bg);padding:1px 5px;border-radius:5px}
+esp-web-install-button{display:block;margin-top:12px}
+.lang{float:right}
+</style>
+</head>
+<body><main>
+<select class="lang" id="lang" aria-label="Langue / Language"><option value="fr">Français</option><option value="en">English</option></select>
+<h1>Lampe Quntis</h1>
+<p data-fr="Installe le firmware pour la barre Quntis LI-HY-0213-GY sur un ESP32 DevKit V1 relié à un nRF24L01+." data-en="Install the firmware for the Quntis LI-HY-0213-GY light bar on an ESP32 DevKit V1 wired to an nRF24L01+."></p>
+
+<section>
+<h2 data-fr="1. Installer" data-en="1. Install"></h2>
+<p data-fr="Branche l'ESP32 en USB, puis clique sur le bouton. Il faut Chrome ou Edge sur un ordinateur." data-en="Plug the ESP32 in over USB, then click the button. This needs Chrome or Edge on a computer."></p>
+<esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+</section>
+
+<section>
+<h2 data-fr="2. Configurer" data-en="2. Set up"></h2>
+<ol>
+<li data-fr="À la fin de l'installation, choisis ton réseau WiFi et entre son mot de passe." data-en="When the installation ends, choose your WiFi network and enter its password."></li>
+<li data-fr="Ouvre la page de la lampe avec « Visit device », ou à l'adresse de l'ESP32." data-en="Open the lamp's page with Visit device, or at the ESP32's address."></li>
+<li data-fr="Clique sur « Apprendre la télécommande », puis appuie sur un bouton de la télécommande, tout près du module." data-en="Click Learn the remote, then press a button on the remote, right next to the module."></li>
+<li data-fr="Dans Home Assistant, ajoute l'appareil découvert sous Paramètres → Appareils et services." data-en="In Home Assistant, add the discovered device under Settings → Devices &amp; services."></li>
+</ol>
+</section>
+
+<section>
+<h2 data-fr="Si le WiFi ne fonctionne pas" data-en="If the WiFi does not work"></h2>
+<p data-fr="Après environ une minute sans réseau, l'ESP32 crée le WiFi « Lampe Quntis ». Son mot de passe est quntis1234. Connecte-toi pour choisir un autre réseau." data-en="After about a minute without a network, the ESP32 starts the Lampe Quntis WiFi. Its password is quntis1234. Connect to it to choose another network."></p>
+</section>
+
+<p><a href="https://github.com/gharl77/Quntis-LED-Controller" data-fr="Code source et câblage sur GitHub" data-en="Source code and wiring on GitHub"></a></p>
+</main>
+<script>
+function setLang(l){document.documentElement.lang=l;document.getElementById('lang').value=l;for(const e of document.querySelectorAll('[data-fr]'))e.innerHTML=e.dataset[l]}
+const sel=document.getElementById('lang');sel.onchange=()=>{try{localStorage.setItem('lang',sel.value)}catch(e){}setLang(sel.value)};
+let saved=null;try{saved=localStorage.getItem('lang')}catch(e){}
+setLang(saved==='fr'||saved==='en'?saved:(navigator.language||'').toLowerCase().startsWith('fr')?'fr':'en');
+</script>
+</body></html>

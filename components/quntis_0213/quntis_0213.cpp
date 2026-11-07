@@ -8,12 +8,14 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#include "esphome/core/preferences.h"
 
 namespace esphome {
     namespace quntis_0213 {
 
         static const char* const TAG = "quntis_0213";
 
+        static const uint8_t COMMAND_BRIGHTNESS_MODE = 0x30;
         static const uint8_t COMMAND_POWER = 0x31;
         static const uint8_t COMMAND_BACKLIGHT = 0x32;
         static const uint8_t COMMAND_LEVEL_UP = 0x35;
@@ -30,11 +32,27 @@ namespace esphome {
         static const uint8_t PACKET_LENGTH = 19;
 
         static const uint8_t TX_REPEATS = 20;
+        // Steps of a fade are replaced by the next one soon, so fewer repeats are enough.
+        static const uint8_t TX_REPEATS_FADE = 5;
         static const uint32_t TX_GAP_MS = 4;
-        static const uint32_t MIN_SEND_INTERVAL_MS = 150;
+        static const uint32_t MIN_SEND_INTERVAL_MS = 100;
 
-        // The remote's lowest setting is 0x1A. Lower values have not been tested on the lamp.
-        static const uint8_t MIN_LEVEL = 0x1A;
+        // The remote repeats each packet in a burst. A packet with the same counter within this
+        // time belongs to the same press.
+        static const uint32_t REMOTE_REPEAT_MS = 1000;
+        static const uint32_t SYNC_WINDOW_MS = 300;
+
+        struct RemoteSettings {
+            uint8_t address[5];
+            uint8_t id[4];
+            uint8_t valid;
+        };
+
+        struct StateSettings {
+            uint8_t backlight_level;
+            uint8_t backlight_on_level;
+            uint8_t auto_dim;
+        };
 
         // The remote's four color temperature presets.
         static const float PRESET_KELVIN[4] = {3000.0f, 4000.0f, 5000.0f, 6500.0f};
@@ -70,7 +88,59 @@ namespace esphome {
             return 0xFF;
         }
 
+        static const char* button_name(uint8_t command) {
+            switch (command) {
+                case 0x30:
+                    return "brightness";
+                case 0x31:
+                    return "power";
+                case 0x32:
+                    return "backlight";
+                case 0x33:
+                    return "button_33";
+                case 0x34:
+                    return "temperature";
+                case 0x35:
+                    return "brightness_up";
+                case 0x36:
+                    return "brightness_down";
+                case 0x39:
+                    return "temperature_up";
+                case 0x3A:
+                    return "temperature_down";
+                case 0x40:
+                    return "auto_dim";
+                default:
+                    return "other";
+            }
+        }
+
+        static float byte_to_kelvin(uint8_t value) {
+            for (uint8_t i = 0; i < 3; i++) {
+                if (value <= PRESET_BYTE[i + 1]) {
+                    float position = (value - PRESET_BYTE[i]) / (PRESET_BYTE[i + 1] - PRESET_BYTE[i]);
+                    return PRESET_KELVIN[i] + position * (PRESET_KELVIN[i + 1] - PRESET_KELVIN[i]);
+                }
+            }
+            return PRESET_KELVIN[3];
+        }
+
         void Quntis0213Light::setup() {
+            // A remote learned on the device replaces the values from the YAML file.
+            remote_pref_ = global_preferences->make_preference<RemoteSettings>(fnv1_hash("quntis_0213_remote"));
+            RemoteSettings remote{};
+            if (remote_pref_.load(&remote) && remote.valid == 1) {
+                device_address_.assign(remote.address, remote.address + 5);
+                device_id_.assign(remote.id, remote.id + 4);
+            }
+            state_pref_ = global_preferences->make_preference<StateSettings>(fnv1_hash("quntis_0213_state"));
+            StateSettings saved{};
+            if (state_pref_.load(&saved)) {
+                backlight_level_ = saved.backlight_level;
+                backlight_on_level_ = saved.backlight_on_level != 0 ? saved.backlight_on_level : 0xFF;
+                auto_dim_on_ = saved.auto_dim == 1;
+            }
+
             SPI.begin(clk_pin_, miso_pin_, mosi_pin_, -1);
             radio_ = new RF24(ce_pin_, cs_pin_);
             if (!radio_->begin()) {
@@ -87,8 +157,12 @@ namespace esphome {
             radio_->setAddressWidth(3);
             radio_->setPayloadSize(PACKET_LENGTH);
             radio_->openWritingPipe(SYNC);
-            radio_->stopListening();
+            radio_->openReadingPipe(1, SYNC);
+            radio_->startListening();
             counter_ = (uint8_t) random_uint32();
+            if (!has_remote()) {
+                ESP_LOGW(TAG, "No remote configured yet: start learning and press a button on the remote");
+            }
         }
 
         void Quntis0213Light::dump_config() {
@@ -96,6 +170,8 @@ namespace esphome {
             ESP_LOGCONFIG(TAG, "  CE: %u, CS: %u, SCK: %u, MOSI: %u, MISO: %u", ce_pin_, cs_pin_, clk_pin_, mosi_pin_,
                           miso_pin_);
             ESP_LOGCONFIG(TAG, "  Channel: %u", channel_);
+            ESP_LOGCONFIG(TAG, "  Minimum level: %02X", min_level_);
+            ESP_LOGCONFIG(TAG, "  Remote: %s", has_remote() ? "configured" : "not configured");
         }
 
         light::LightTraits Quntis0213Light::get_traits() {
@@ -111,12 +187,15 @@ namespace esphome {
             state->current_values_as_brightness(&brightness);
             target_on_ = state->current_values.is_on();
             int level = (int) std::lround(brightness * 255.0f);
-            target_level_ = (uint8_t) clamp(level, (int) MIN_LEVEL, 255);
+            target_level_ = (uint8_t) clamp(level, (int) min_level_, 255);
             target_temp_ = kelvin_to_byte(1000000.0f / state->current_values.get_color_temperature());
 
-            // The value restored at boot says nothing about the lamp, so it is not sent.
-            if (first_write_) {
+            // The value restored at boot, and the values taken from the remote, already match
+            // what the lamp does, so they are not sent.
+            bool syncing = syncing_until_ms_ != 0 && millis() < syncing_until_ms_;
+            if (first_write_ || syncing) {
                 first_write_ = false;
+                syncing_until_ms_ = 0;
                 sent_on_ = target_on_;
                 sent_level_ = target_level_;
                 sent_temp_ = target_temp_;
@@ -126,6 +205,7 @@ namespace esphome {
         }
 
         void Quntis0213Light::loop() {
+            receive_();
             if (!pending_ || millis() - last_send_ms_ < MIN_SEND_INTERVAL_MS) {
                 return;
             }
@@ -141,6 +221,7 @@ namespace esphome {
                 sent_temp_ = target_temp_;
                 auto_dim_on_ = false;
                 send_(COMMAND_POWER);
+                save_state_();
                 return;
             }
             if (!target_on_) {
@@ -152,6 +233,7 @@ namespace esphome {
                 // A manual brightness change leaves automatic dimming, as on the remote.
                 auto_dim_on_ = false;
                 send_(command);
+                save_state_();
             }
             if (target_temp_ != sent_temp_) {
                 uint8_t command = target_temp_ > sent_temp_ ? COMMAND_TEMP_UP : COMMAND_TEMP_DOWN;
@@ -161,8 +243,9 @@ namespace esphome {
         }
 
         void Quntis0213Light::set_backlight(bool on) {
-            backlight_on_ = on;
+            backlight_level_ = on ? backlight_on_level_ : 0x00;
             send_(COMMAND_BACKLIGHT);
+            save_state_();
         }
 
         void Quntis0213Light::set_auto_dim(bool on) {
@@ -172,13 +255,150 @@ namespace esphome {
             }
             auto_dim_on_ = on;
             if (on) {
-                backlight_on_ = true;
+                backlight_level_ = backlight_on_level_;
             }
             send_(on ? COMMAND_AUTO_DIM_ON : COMMAND_AUTO_DIM_OFF);
+            save_state_();
+        }
+
+        void Quntis0213Light::save_state_() {
+            StateSettings settings{backlight_level_, backlight_on_level_, (uint8_t) (auto_dim_on_ ? 1 : 0)};
+            state_pref_.save(&settings);
+        }
+
+        void Quntis0213Light::start_learning() {
+            learning_ = true;
+            ESP_LOGI(TAG, "Learning: press a button on the remote near the module");
+        }
+
+        int Quntis0213Light::last_remote_age() const {
+            if (last_remote_counter_ < 0) {
+                return -1;
+            }
+            return (int) ((millis() - last_remote_ms_) / 1000);
+        }
+
+        void Quntis0213Light::receive_() {
+            if (radio_ == nullptr) {
+                return;
+            }
+            while (radio_->available()) {
+                uint8_t packet[PACKET_LENGTH];
+                radio_->read(packet, PACKET_LENGTH);
+
+                uint16_t crc = packet_crc(packet, 16);
+                if (packet[16] != (crc >> 8) || packet[17] != (crc & 0xFF) || packet[18] != TRAILER) {
+                    continue;
+                }
+                uint8_t data[11];
+                uint8_t sum = 0;
+                for (uint8_t i = 0; i < 11; i++) {
+                    data[i] = reverse_bits(packet[5 + i] ^ SCRAMBLE[i]);
+                    if (i < 10) {
+                        sum += data[i];
+                    }
+                }
+                if (sum != data[10]) {
+                    continue;
+                }
+                packets_received_++;
+
+                if (learning_) {
+                    learning_ = false;
+                    device_address_.assign(packet, packet + 5);
+                    device_id_.assign(data, data + 4);
+                    RemoteSettings remote{};
+                    std::copy(packet, packet + 5, remote.address);
+                    std::copy(data, data + 4, remote.id);
+                    remote.valid = 1;
+                    remote_pref_.save(&remote);
+                    global_preferences->sync();
+                    ESP_LOGI(TAG, "Remote learned: address %02X %02X %02X %02X %02X, ID %02X %02X %02X %02X", packet[0],
+                             packet[1], packet[2], packet[3], packet[4], data[0], data[1], data[2], data[3]);
+                }
+                if (!has_remote() || !std::equal(device_address_.begin(), device_address_.end(), packet) ||
+                    !std::equal(device_id_.begin(), device_id_.end(), data)) {
+                    continue;
+                }
+
+                uint32_t now = millis();
+                if (data[9] == last_remote_counter_ && now - last_remote_ms_ < REMOTE_REPEAT_MS) {
+                    last_remote_ms_ = now;
+                    continue;
+                }
+                last_remote_counter_ = data[9];
+                last_remote_ms_ = now;
+                presses_received_++;
+                handle_remote_(data);
+            }
+        }
+
+        void Quntis0213Light::handle_remote_(const uint8_t* data) {
+            uint8_t command = data[4];
+            uint8_t level = data[5];
+            uint8_t temp = data[6];
+            std::copy(data + 4, data + 8, last_remote_values_);
+            ESP_LOGD(TAG, "Remote %02X: level %02X, temp %02X, backlight %02X", command, level, temp, data[7]);
+            std::string button = button_name(command);
+            for (auto* trigger : remote_triggers_) {
+                trigger->trigger(button);
+            }
+
+            if (command == COMMAND_BACKLIGHT) {
+                // The remote's backlight button always sends FF, and the lamp toggles its backlight.
+                backlight_level_ = backlight_level_ != 0 ? 0x00 : backlight_on_level_;
+            } else {
+                backlight_level_ = data[7];
+                if (backlight_level_ != 0) {
+                    backlight_on_level_ = backlight_level_;
+                }
+            }
+            if (command == COMMAND_AUTO_DIM_ON) {
+                auto_dim_on_ = true;
+            } else if (command == COMMAND_AUTO_DIM_OFF || command == COMMAND_POWER || command == COMMAND_LEVEL_UP ||
+                       command == COMMAND_LEVEL_DOWN || command == COMMAND_BRIGHTNESS_MODE) {
+                auto_dim_on_ = false;
+            }
+            if (level == 0) {
+                auto_dim_on_ = false;
+            }
+            save_state_();
+
+            bool on = level != 0;
+            sent_on_ = on;
+            sent_temp_ = temp;
+            if (on) {
+                sent_level_ = level;
+            }
+            if (state_ == nullptr) {
+                return;
+            }
+            const auto& current = state_->remote_values;
+            float brightness = level / 255.0f;
+            float mireds = 1000000.0f / byte_to_kelvin(temp);
+            bool same = current.is_on() == on && (!on || std::fabs(current.get_brightness() - brightness) < 0.003f) &&
+                        std::fabs(current.get_color_temperature() - mireds) < 0.5f;
+            if (same) {
+                return;
+            }
+            syncing_until_ms_ = millis() + SYNC_WINDOW_MS;
+            auto call = state_->make_call();
+            call.set_state(on);
+            if (on) {
+                call.set_brightness(brightness);
+            }
+            call.set_color_temperature(mireds);
+            // The lamp already changed, so there is nothing to fade.
+            call.set_transition_length(0);
+            call.perform();
         }
 
         void Quntis0213Light::send_(uint8_t command) {
-            if (radio_ == nullptr || device_address_.size() != 5 || device_id_.size() != 4) {
+            if (radio_ == nullptr) {
+                return;
+            }
+            if (!has_remote()) {
+                ESP_LOGW(TAG, "No remote configured: learn the remote first");
                 return;
             }
             uint8_t data[11];
@@ -187,7 +407,7 @@ namespace esphome {
             // A level of 00 turns off the main light only: the backlight keeps its own byte.
             data[5] = sent_on_ ? sent_level_ : 0x00;
             data[6] = sent_temp_;
-            data[7] = backlight_byte_();
+            data[7] = backlight_level_;
             data[8] = 0x00;
             data[9] = counter_++;
             uint8_t sum = 0;
@@ -207,10 +427,14 @@ namespace esphome {
             packet[18] = TRAILER;
 
             ESP_LOGD(TAG, "Command %02X: level %02X, temp %02X, backlight %02X", command, data[5], data[6], data[7]);
-            for (uint8_t i = 0; i < TX_REPEATS; i++) {
+            bool fading = state_ != nullptr && state_->is_transformer_active();
+            uint8_t repeats = fading ? TX_REPEATS_FADE : TX_REPEATS;
+            radio_->stopListening();
+            for (uint8_t i = 0; i < repeats; i++) {
                 radio_->write(packet, PACKET_LENGTH);
                 delay(TX_GAP_MS);
             }
+            radio_->startListening();
         }
 
     }  // namespace quntis_0213

@@ -1,9 +1,15 @@
 import esphome.codegen as cg
+from esphome import automation
 import esphome.config_validation as cv
 from esphome.components import light
-from esphome.const import CONF_DEFAULT_TRANSITION_LENGTH, CONF_GAMMA_CORRECT, CONF_OUTPUT_ID
+from esphome.const import (
+    CONF_DEFAULT_TRANSITION_LENGTH,
+    CONF_GAMMA_CORRECT,
+    CONF_OUTPUT_ID,
+    CONF_TRIGGER_ID,
+)
 
-from . import Quntis0213Light
+from . import Quntis0213Light, RemoteTrigger
 
 CONF_CE_PIN = "ce_pin"
 CONF_CS_PIN = "cs_pin"
@@ -13,6 +19,8 @@ CONF_SPI_MISO_PIN = "spi_miso_pin"
 CONF_CHANNEL = "channel"
 CONF_DEVICE_ADDRESS = "device_address"
 CONF_REMOTE_ID = "remote_id"
+CONF_MIN_LEVEL = "min_level"
+CONF_ON_REMOTE = "on_remote"
 
 CONFIG_SCHEMA = (
     light.LIGHT_SCHEMA.extend(
@@ -26,13 +34,20 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_SPI_MOSI_PIN): cv.int_range(min=0, max=48),
             cv.Required(CONF_SPI_MISO_PIN): cv.int_range(min=0, max=48),
             cv.Optional(CONF_CHANNEL, default=80): cv.int_range(min=0, max=125),
+            # Both values can instead be learned from the remote on the device.
             # Scrambled address bytes, as they appear on air after the 71 0F 55 sync.
-            cv.Required(CONF_DEVICE_ADDRESS): cv.All(
+            cv.Inclusive(CONF_DEVICE_ADDRESS, "remote"): cv.All(
                 cv.ensure_list(cv.hex_uint8_t), cv.Length(min=5, max=5)
             ),
             # First four decoded payload bytes.
-            cv.Required(CONF_REMOTE_ID): cv.All(
+            cv.Inclusive(CONF_REMOTE_ID, "remote"): cv.All(
                 cv.ensure_list(cv.hex_uint8_t), cv.Length(min=4, max=4)
+            ),
+            # The remote's lowest level is 0x1A. The tested lamp stays steady down to 0x03, about 1 %.
+            cv.Optional(CONF_MIN_LEVEL, default=0x03): cv.All(cv.hex_uint8_t, cv.Range(min=1, max=0xFF)),
+            # Runs once per press on the remote, with the button's name in "button".
+            cv.Optional(CONF_ON_REMOTE): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RemoteTrigger)}
             ),
         }
     )
@@ -56,5 +71,10 @@ async def to_code(config):
         config[CONF_SPI_MISO_PIN],
     ))
     cg.add(var.set_channel(config[CONF_CHANNEL]))
-    cg.add(var.set_device_address(config[CONF_DEVICE_ADDRESS]))
-    cg.add(var.set_device_id(config[CONF_REMOTE_ID]))
+    cg.add(var.set_min_level(config[CONF_MIN_LEVEL]))
+    for conf in config.get(CONF_ON_REMOTE, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [(cg.std_string, "button")], conf)
+    if CONF_DEVICE_ADDRESS in config:
+        cg.add(var.set_device_address(config[CONF_DEVICE_ADDRESS]))
+        cg.add(var.set_device_id(config[CONF_REMOTE_ID]))

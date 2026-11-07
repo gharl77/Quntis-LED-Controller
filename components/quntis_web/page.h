@@ -60,8 +60,9 @@ a{color:var(--accent)}
 </section>
 
 <section><h2 data-t="information"></h2><dl id="info"></dl>
-<p><a href="#" id="wifiopen" data-t="changeWifi"></a></p>
-<button id="restart" data-t="restart"></button></section>
+<p><a href="#" id="wifiopen" data-t="changeWifi"></a><span id="pwlinkbox" hidden> · <a href="#" id="pwopen" data-t="changePassword"></a></span></p>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><button id="learn" data-t="learn"></button><button id="restart" data-t="restart"></button></div>
+<p class="msg" id="learnmsg" role="status"></p></section>
 
 <section id="wifipanel" hidden>
 <div class="row"><h2 style="margin:0" data-t="changeWifi"></h2><a href="#" id="wificlose" data-t="close"></a></div>
@@ -74,10 +75,19 @@ a{color:var(--accent)}
 </form>
 <p class="msg" id="wifimsg" role="status"></p>
 </section>
+<section id="pwpanel" hidden>
+<div class="row"><h2 style="margin:0" data-t="changePassword"></h2><a href="#" id="pwclose" data-t="close"></a></div>
+<form id="pwform" style="margin-top:12px">
+<input type="password" id="pw1" data-p="newPassword" maxlength="64" autocomplete="new-password">
+<input type="password" id="pw2" data-p="confirmPassword" maxlength="64" autocomplete="new-password">
+<button class="primary" data-t="savePassword"></button>
+</form>
+<p class="msg" id="pwmsg" role="status"></p>
+</section>
 </main><script>
 const TEXT={
 fr:{light:'Lumière',lamp:'Lampe',brightness:'Luminosité',temperature:'Température',backlight:'Rétroéclairage',autoDim:'Variation automatique',
-note:"La lampe ne renvoie pas son état : cette page montre le dernier ordre envoyé par l'ESP32, pas ce que fait la télécommande.",
+note:"La lampe ne renvoie pas son état : cette page montre le dernier ordre envoyé ou entendu de la télécommande. Les réglages de la variation automatique et les coupures de courant n'y apparaissent pas.",
 information:'Informations',changeWifi:'Modifier le WiFi',restart:"Redémarrer l'ESP32",close:'Fermer',scan:'Balayer les réseaux',scanning:'Balayage en cours…',
 networkName:'Nom du réseau',password:'Mot de passe',save:'Enregistrer et connecter',
 network:'Réseau',ip:'Adresse IP',signal:'Signal WiFi',radio:'Module radio',radioOk:'OK, canal ',radioBad:'Ne répond pas, vérifie les fils',uptime:'En marche depuis',memory:'Mémoire libre',mac:'Adresse MAC',
@@ -85,9 +95,14 @@ excellent:'Excellent',good:'Bon',fair:'Moyen',weak:'Faible',day:' j ',kb:' ko',
 shortPassword:'Le mot de passe doit avoir au moins 8 caractères.',noNetwork:'Choisis ou écris un réseau.',
 confirmWifi:n=>'Connecter la lampe à « '+n+' » ? Cette page va se déconnecter.',
 saved:h=>"Enregistré. La lampe se connecte. Si le réseau change, son adresse changera aussi : essaie http://"+h+" ou cherche-la dans ton routeur. En cas d'échec, connecte-toi à son WiFi de secours après environ une minute.",
-refused:'La lampe a refusé ces informations.',confirmRestart:"Redémarrer l'ESP32 ?"},
+refused:'La lampe a refusé ces informations.',confirmRestart:"Redémarrer l'ESP32 ?",
+remote:'Télécommande',remoteNone:'Non associée',remoteNever:'Associée, aucun signal depuis le démarrage',remoteSeen:a=>'Associée, dernier signal il y a '+ago(a),
+learn:'Apprendre la télécommande',learning:'Appuie sur un bouton de la télécommande, tout près du module…',learned:'Télécommande associée.',
+confirmLearn:"Apprendre une télécommande ? La prochaine télécommande Quntis entendue remplacera l'actuelle.",
+changePassword:'Changer le mot de passe',newPassword:'Nouveau mot de passe (8 caractères ou plus)',confirmPassword:'Confirme le mot de passe',savePassword:'Enregistrer le mot de passe',
+pwMismatch:'Les deux mots de passe ne sont pas identiques.',pwSaved:"Mot de passe changé. Ton navigateur va te le demander, avec l'utilisateur admin."},
 en:{light:'Light',lamp:'Lamp',brightness:'Brightness',temperature:'Color temperature',backlight:'Backlight',autoDim:'Automatic dimming',
-note:"The lamp does not report its state: this page shows the last command sent by the ESP32, not what the remote does.",
+note:"The lamp does not report its state: this page shows the last command sent or heard from the remote. Automatic dimming adjustments and power cuts do not show here.",
 information:'Information',changeWifi:'Change WiFi',restart:'Restart the ESP32',close:'Close',scan:'Scan networks',scanning:'Scanning…',
 networkName:'Network name',password:'Password',save:'Save and connect',
 network:'Network',ip:'IP address',signal:'WiFi signal',radio:'Radio module',radioOk:'OK, channel ',radioBad:'Not responding, check the wires',uptime:'Uptime',memory:'Free memory',mac:'MAC address',
@@ -95,7 +110,12 @@ excellent:'Excellent',good:'Good',fair:'Fair',weak:'Weak',day:' d ',kb:' kB',
 shortPassword:'The password must have at least 8 characters.',noNetwork:'Choose or type a network.',
 confirmWifi:n=>'Connect the lamp to "'+n+'"? This page will disconnect.',
 saved:h=>"Saved. The lamp is connecting. If the network changes, its address will change too: try http://"+h+" or look for it in your router. If it fails, connect to its backup WiFi after about a minute.",
-refused:'The lamp refused this information.',confirmRestart:'Restart the ESP32?'}};
+refused:'The lamp refused this information.',confirmRestart:'Restart the ESP32?',
+remote:'Remote',remoteNone:'Not paired',remoteNever:'Paired, no signal since startup',remoteSeen:a=>'Paired, last signal '+ago(a)+' ago',
+learn:'Learn the remote',learning:'Press a button on the remote, right next to the module…',learned:'Remote paired.',
+confirmLearn:'Learn a remote? The next Quntis remote heard will replace the current one.',
+changePassword:'Change password',newPassword:'New password (8 characters or more)',confirmPassword:'Confirm the password',savePassword:'Save the password',
+pwMismatch:'The two passwords are not the same.',pwSaved:'Password changed. Your browser will ask for it, with the user admin.'}};
 const $=id=>document.getElementById(id);
 let busyUntil=0,wasScanning=false,scanStartUntil=0,lastState=null,lastNets=[],T=TEXT.fr;
 const post=(path,params={})=>fetch(path,{method:'POST',headers:{'X-Quntis':'1','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(params)});
@@ -103,6 +123,8 @@ const hold=()=>busyUntil=Date.now()+1500;
 function send(path,params){hold();return post(path,params).catch(()=>{})}
 function bars(r){return r>=-55?T.excellent:r>=-67?T.good:r>=-78?T.fair:T.weak}
 function uptime(s){const d=Math.floor(s/86400),h=Math.floor(s/3600)%24,m=Math.floor(s/60)%60;return(d?d+T.day:'')+(d||h?h+' h ':'')+m+' min'}
+function ago(a){return a<60?a+' s':a<3600?Math.floor(a/60)+' min':Math.floor(a/3600)+' h'}
+let wasLearning=false;
 function labels(){$('bv').textContent=$('brightness').value+' %';$('kv').textContent=$('kelvin').value+' K'}
 function scanLabel(){$('scan').disabled=wasScanning;$('scan').textContent=wasScanning?T.scanning:T.scan}
 function setLang(code){
@@ -115,11 +137,15 @@ function setLang(code){
 function render(s){
  lastState=s;$('title').textContent=s.name;document.title=s.name;
  if(Date.now()>busyUntil){$('on').checked=!!s.on;$('backlight').checked=!!s.backlight;$('auto_dim').checked=!!s.auto_dim;
-  if(s.on)$('brightness').value=s.brightness;$('kelvin').value=s.kelvin;labels()}
+  $('brightness').min=s.min||10;if(s.on)$('brightness').value=s.brightness;$('kelvin').value=s.kelvin;labels()}
  $('auto_dim').disabled=!s.on&&!s.auto_dim;
- const rows=[[T.network,s.ssid],[T.ip,s.ip],[T.signal,s.rssi+' dBm ('+bars(s.rssi)+')'],[T.radio,s.radio?T.radioOk+s.channel:T.radioBad],[T.uptime,uptime(s.uptime)],[T.memory,Math.round(s.heap/1024)+T.kb],[T.mac,s.mac],['ESPHome',s.version]];
+ const rows=[[T.remote,!s.remote?T.remoteNone:s.remote_age<0?T.remoteNever:T.remoteSeen(s.remote_age)],[T.network,s.ssid],[T.ip,s.ip],[T.signal,s.rssi+' dBm ('+bars(s.rssi)+')'],[T.radio,s.radio?T.radioOk+s.channel:T.radioBad],[T.uptime,uptime(s.uptime)],[T.memory,Math.round(s.heap/1024)+T.kb],[T.mac,s.mac],['ESPHome',s.version]];
  const info=$('info');info.replaceChildren();
  for(const[k,v]of rows){const t=document.createElement('dt'),d=document.createElement('dd');t.textContent=k;d.textContent=v;info.append(t,d)}
+ $('pwlinkbox').hidden=!s.auth;
+ const lm=$('learnmsg');$('learn').disabled=!!s.learning;
+ if(s.learning){lm.className='msg';lm.textContent=T.learning}else if(wasLearning){lm.textContent=s.remote?T.learned:''}
+ wasLearning=!!s.learning;
  const scanning=!!s.scanning||Date.now()<scanStartUntil;
  if(wasScanning&&!scanning)nets();
  wasScanning=scanning;scanLabel();
@@ -149,6 +175,15 @@ $('wifi').onsubmit=async e=>{e.preventDefault();
  if(!confirm(T.confirmWifi(ssid)))return;
  try{const r=await post('/api/wifi',{ssid,password:pw});if(!r.ok)throw 0;$('password').value='';m.textContent=T.saved(location.hostname)}
  catch(e){m.className='msg bad';m.textContent=T.refused}};
+$('pwopen').onclick=e=>{e.preventDefault();const p=$('pwpanel');p.hidden=false;p.scrollIntoView({behavior:'smooth'});$('pw1').focus()};
+$('pwclose').onclick=e=>{e.preventDefault();$('pwpanel').hidden=true;$('pw1').value=$('pw2').value=''};
+$('pwform').onsubmit=async e=>{e.preventDefault();
+ const m=$('pwmsg'),a=$('pw1').value,b=$('pw2').value;m.className='msg bad';
+ if(a.length<8){m.textContent=T.shortPassword;return}
+ if(a!==b){m.textContent=T.pwMismatch;return}
+ try{const r=await post('/api/password',{password:a});if(!r.ok)throw 0;$('pw1').value=$('pw2').value='';m.className='msg';m.textContent=T.pwSaved}
+ catch(err){m.textContent=T.refused}};
+$('learn').onclick=()=>{if(confirm(T.confirmLearn)){$('learn').disabled=true;$('learnmsg').textContent=T.learning;post('/api/learn').catch(()=>{})}};
 $('restart').onclick=()=>{if(confirm(T.confirmRestart))post('/api/restart').catch(()=>{})};
 $('lang').onchange=e=>{try{localStorage.setItem('lang',e.target.value)}catch(err){}setLang(e.target.value)};
 let saved=null;try{saved=localStorage.getItem('lang')}catch(e){}

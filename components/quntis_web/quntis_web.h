@@ -7,6 +7,7 @@
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/preferences.h"
 
 namespace esphome {
     namespace quntis_0213 {
@@ -29,6 +30,7 @@ namespace esphome {
             float get_setup_priority() const override { return setup_priority::WIFI - 0.5f; }
 
             void set_light(light::LightState* light) { light_ = light; }
+            void set_yaml_password(const char* password) { yaml_password_ = password; }
 
             bool canHandle(AsyncWebServerRequest* request) const override;
             void handleRequest(AsyncWebServerRequest* request) override;
@@ -41,9 +43,13 @@ namespace esphome {
             void handle_light_(AsyncWebServerRequest* request);
             void handle_networks_(AsyncWebServerRequest* request);
             void handle_wifi_(AsyncWebServerRequest* request);
+            void handle_password_(AsyncWebServerRequest* request);
 
             web_server_base::WebServerBase* base_;
             light::LightState* light_{nullptr};
+            const char* yaml_password_{nullptr};
+            char password_[65]{};
+            ESPPreferenceObject password_pref_;
 
             Mutex state_lock_;
             std::string state_json_{"{}"};
