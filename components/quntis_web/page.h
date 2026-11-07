@@ -44,6 +44,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;overflow-wrap:anywhere}
 .msg{margin:10px 0 0;color:var(--dim)}.msg.bad{color:var(--bad)}
 .note{font-size:14px;color:var(--dim);margin:12px 0 0}
 a{color:var(--accent)}
+footer{text-align:center;font-size:14px;color:var(--dim);margin:6px 0 20px}
 </style></head><body><main>
 <header><h1 id="title">Lampe Quntis</h1>
 <select id="lang" aria-label="Langue / Language"><option value="fr">Français</option><option value="en">English</option></select></header>
@@ -88,6 +89,7 @@ a{color:var(--accent)}
 </form>
 <p class="msg" id="pwmsg" role="status"></p>
 </section>
+<footer id="footer"></footer>
 </main><script>
 const TEXT={
 fr:{light:'Lumière',lamp:'Lampe',brightness:'Luminosité',temperature:'Température',backlight:'Rétroéclairage',autoDim:'Variation automatique',
@@ -100,6 +102,7 @@ shortPassword:'Le mot de passe doit avoir au moins 8 caractères.',noNetwork:'Ch
 confirmWifi:n=>'Connecter la lampe à « '+n+' » ? Cette page va se déconnecter.',
 saved:h=>"Enregistré. La lampe se connecte. Si le réseau change, son adresse changera aussi : essaie http://"+h+" ou cherche-la dans ton routeur. En cas d'échec, connecte-toi à son WiFi de secours après environ une minute.",
 refused:'La lampe a refusé ces informations.',confirmRestart:"Redémarrer l'ESP32 ?",
+firmware:'Firmware',release:'Notes de version',source:'Code source sur GitHub',issue:'Signaler un problème',
 remote:'Télécommande',remoteNone:'Non associée',remoteNever:'Associée, aucun signal depuis le démarrage',remoteSeen:a=>'Associée, dernier signal il y a '+ago(a),
 learn:'Apprendre la télécommande',learning:'Appuie sur un bouton de la télécommande, tout près du module…',learned:'Télécommande associée.',
 confirmLearn:"Apprendre une télécommande ? La prochaine télécommande Quntis entendue remplacera l'actuelle.",
@@ -116,6 +119,7 @@ shortPassword:'The password must have at least 8 characters.',noNetwork:'Choose 
 confirmWifi:n=>'Connect the lamp to "'+n+'"? This page will disconnect.',
 saved:h=>"Saved. The lamp is connecting. If the network changes, its address will change too: try http://"+h+" or look for it in your router. If it fails, connect to its backup WiFi after about a minute.",
 refused:'The lamp refused this information.',confirmRestart:'Restart the ESP32?',
+firmware:'Firmware',release:'Release notes',source:'Source code on GitHub',issue:'Report a problem',
 remote:'Remote',remoteNone:'Not paired',remoteNever:'Paired, no signal since startup',remoteSeen:a=>'Paired, last signal '+ago(a)+' ago',
 learn:'Learn the remote',learning:'Press a button on the remote, right next to the module…',learned:'Remote paired.',
 confirmLearn:'Learn a remote? The next Quntis remote heard will replace the current one.',
@@ -131,6 +135,9 @@ function bars(r){return r>=-55?T.excellent:r>=-67?T.good:r>=-78?T.fair:T.weak}
 function uptime(s){const d=Math.floor(s/86400),h=Math.floor(s/3600)%24,m=Math.floor(s/60)%60;return(d?d+T.day:'')+(d||h?h+' h ':'')+m+' min'}
 function ago(a){return a<60?a+' s':a<3600?Math.floor(a/60)+' min':Math.floor(a/3600)+' h'}
 let wasLearning=false;
+// A release looks like 2026.11.2. Other builds show their commit and have no release page.
+function isRelease(v){return /^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$/.test(v||'')}
+function link(text,href){const a=document.createElement('a');a.href=href;a.textContent=text;a.target='_blank';a.rel='noopener noreferrer';return a}
 function labels(){$('bv').textContent=$('brightness').value+' %';$('kv').textContent=$('kelvin').value+' K'}
 function scanLabel(){$('scan').disabled=wasScanning;$('scan').textContent=wasScanning?T.scanning:T.scan}
 function setLang(code){
@@ -145,9 +152,11 @@ function render(s){
  if(Date.now()>busyUntil){$('on').checked=!!s.on;$('backlight').checked=!!s.backlight;$('auto_dim').checked=!!s.auto_dim;
   $('brightness').min=s.min||10;if(s.on)$('brightness').value=s.brightness;$('kelvin').value=s.kelvin;labels()}
  $('auto_dim').disabled=!s.on&&!s.auto_dim;
- const rows=[[T.remote,!s.remote?T.remoteNone:s.remote_age<0?T.remoteNever:T.remoteSeen(s.remote_age)],[T.network,s.ssid],[T.ip,s.ip],[T.signal,s.rssi+' dBm ('+bars(s.rssi)+')'],[T.radio,s.radio?T.radioOk+s.channel:T.radioBad],[T.uptime,uptime(s.uptime)],[T.memory,Math.round(s.heap/1024)+T.kb],[T.mac,s.mac],['ESPHome',s.version]];
+ const rows=[[T.remote,!s.remote?T.remoteNone:s.remote_age<0?T.remoteNever:T.remoteSeen(s.remote_age)],[T.network,s.ssid],[T.ip,s.ip],[T.signal,s.rssi+' dBm ('+bars(s.rssi)+')'],[T.radio,s.radio?T.radioOk+s.channel:T.radioBad],[T.uptime,uptime(s.uptime)],[T.memory,Math.round(s.heap/1024)+T.kb],[T.mac,s.mac],[T.firmware,s.fw,isRelease(s.fw)?s.repo+'/releases/tag/v'+s.fw:''],['ESPHome',s.version]];
  const info=$('info');info.replaceChildren();
- for(const[k,v]of rows){const t=document.createElement('dt'),d=document.createElement('dd');t.textContent=k;d.textContent=v;info.append(t,d)}
+ for(const[k,v,href]of rows){const t=document.createElement('dt'),d=document.createElement('dd');t.textContent=k;d.append(href?link(v,href):v);info.append(t,d)}
+ const notes=isRelease(s.fw)?s.repo+'/releases/tag/v'+s.fw:'';
+ const f=$('footer');f.replaceChildren(notes?link('Lampe Quntis '+s.fw,notes):'Lampe Quntis '+s.fw,' · ',link(T.source,s.repo),' · ',link(T.issue,s.repo+'/issues'));
  $('pwlinkbox').hidden=!s.auth;
  $('autotemprow').hidden=!s.clock;$('timerleft').textContent=s.timer?T.timerLeft(s.timer):'';
  if(Date.now()>busyUntil){$('auto_temp').checked=!!s.auto_temp;if(!s.timer)$('timer').value='0'}

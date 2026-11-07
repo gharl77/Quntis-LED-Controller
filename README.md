@@ -53,6 +53,7 @@ The remote has these controls:
 - **The remote stays in sync:** the ESP32 listens to the remote, so Home Assistant follows what you change with it.
 - **Fades:** brightness and color temperature change over 1 second, like a smart bulb. Set `default_transition_length: 0s` to change at once. How smooth this looks has not been checked.
 - **After a restart:** the ESP32 shows the last known state again.
+- **Version:** the device page in Home Assistant shows the firmware version, such as `2026.11.2 (ESPHome 2026.10.2)`. Versions are numbered year.month.number. A build from changes after a release shows the release, the number of commits since, and the commit, such as `2026.11.2-1-g1a2b3c4`.
 - **Timer and presets:** they run on the ESP32, so they work even when Home Assistant is down. Add your own presets as template buttons: each one also shows on the web page.
 - **Time of day:** the color temperature goes from 3000 K at night to 5000 K between 10:00 and 16:00, with smooth changes in between. Choosing a color temperature yourself, including with the remote's color temperature buttons, turns this off. Other remote buttons send the remote's own color temperature, so the lamp follows the time of day again a moment later. It needs the time from Home Assistant.
 
@@ -72,16 +73,18 @@ The ESP32 also serves its own page, so the lamp works without Home Assistant. In
 
 <img src="Images/LI-HY-0213-GY_WebPage.png" alt="The lamp's web page, with its light controls, information and WiFi panel" width="360">
 
-*The page with its WiFi panel open. The network names and addresses are sample data.*
+*The page with sample data. The WiFi and password panels open from the links under Information.*
 
 | Section | What it does |
 |---|---|
 | Light | On/off, brightness, color temperature, backlight, automatic dimming, time of day, timer and your presets |
-| Information | Remote status, network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address and ESPHome version |
+| Information | Remote status, network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address, firmware and ESPHome versions |
 | Learn the remote | Pairs the next remote heard within 60 seconds |
 | Change WiFi | Scans nearby networks, then saves a new network and password |
 | Change password | Replaces the page's password |
 | Restart | Restarts the ESP32 |
+
+The firmware version links to its release notes. The footer links to the source code and to the issue tracker.
 
 The page is in French and English. It follows the browser's language, and the menu at the top changes it.
 

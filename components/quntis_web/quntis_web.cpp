@@ -107,7 +107,8 @@ namespace esphome {
                      "{\"on\":%d,\"brightness\":%d,\"kelvin\":%d,\"backlight\":%d,\"auto_dim\":%d,"
                      "\"radio\":%d,\"channel\":%u,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\","
                      "\"uptime\":%u,\"heap\":%u,\"name\":\"%s\",\"version\":\"%s\",\"scanning\":%d,"
-                     "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d,\"timer\":%u,\"auto_temp\":%d,\"clock\":%d}",
+                     "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d,\"timer\":%u,\"auto_temp\":%d,\"clock\":%d,"
+                     "\"fw\":\"%s\",\"repo\":\"%s\"}",
                      values.is_on(), (int) std::lround(values.get_brightness() * 100.0f),
                      (int) std::lround(1000000.0f / values.get_color_temperature()), output_()->get_backlight(),
                      output_()->get_auto_dim(), !output_()->is_failed(), output_()->get_channel(), escaped_ssid,
@@ -118,7 +119,7 @@ namespace esphome {
                      output_()->last_remote_values()[1], output_()->last_remote_values()[2],
                      output_()->last_remote_values()[3], yaml_password_ != nullptr,
                      (unsigned) output_()->get_timer_minutes(), output_()->get_auto_temperature(),
-                     output_()->has_clock());
+                     output_()->has_clock(), QUNTIS_VERSION, QUNTIS_REPO_URL);
 
             LockGuard guard(state_lock_);
             state_json_ = buffer;

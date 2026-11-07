@@ -4,12 +4,17 @@ import esphome.config_validation as cv
 from esphome.components import light, time
 from esphome.const import (
     CONF_DEFAULT_TRANSITION_LENGTH,
+    CONF_ESPHOME,
+    CONF_PROJECT,
+    CONF_VERSION,
     CONF_GAMMA_CORRECT,
     CONF_OUTPUT_ID,
     CONF_TRIGGER_ID,
 )
 
-from . import Quntis0213Light, RemoteTrigger
+from esphome.core import CORE
+
+from . import PROJECT_NAME, REPO_URL, Quntis0213Light, RemoteTrigger, source_version
 
 CONF_CE_PIN = "ce_pin"
 CONF_CS_PIN = "cs_pin"
@@ -61,6 +66,17 @@ CONFIG_SCHEMA = (
 async def to_code(config):
     cg.add_library("SPI", None)
     cg.add_library("nrf24/RF24", "1.6.2")
+
+    # Home Assistant shows the project version on the device page. A YAML "project:" wins, as in
+    # the ready-made firmware, whose version comes from the GitHub build.
+    project = CORE.config[CONF_ESPHOME].get(CONF_PROJECT)
+    version = project[CONF_VERSION] if project and project[CONF_VERSION] != "dev" else source_version()
+    if project is None:
+        cg.add_define("ESPHOME_PROJECT_NAME", PROJECT_NAME)
+        cg.add_define("ESPHOME_PROJECT_VERSION", version)
+        cg.add_define("ESPHOME_PROJECT_VERSION_30", version[:29])
+    cg.add_define("QUNTIS_VERSION", version)
+    cg.add_define("QUNTIS_REPO_URL", REPO_URL)
 
     var = cg.new_Pvariable(config[CONF_OUTPUT_ID])
     await cg.register_component(var, config)
