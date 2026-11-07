@@ -1,5 +1,7 @@
 #include "quntis_0213.h"
 
+#include "protocol.h"
+
 #include <SPI.h>
 
 #include <algorithm>
@@ -18,8 +20,13 @@ namespace esphome {
         static const uint8_t COMMAND_BRIGHTNESS_MODE = 0x30;
         static const uint8_t COMMAND_POWER = 0x31;
         static const uint8_t COMMAND_BACKLIGHT = 0x32;
+        // The remote's brightness button also sends 33.
+        static const uint8_t COMMAND_BRIGHTNESS_MODE_2 = 0x33;
+        static const uint8_t COMMAND_TEMP_MODE = 0x34;
         static const uint8_t COMMAND_LEVEL_UP = 0x35;
         static const uint8_t COMMAND_LEVEL_DOWN = 0x36;
+        // + held in brightness mode: the level rises step by step.
+        static const uint8_t COMMAND_LEVEL_UP_HELD = 0x37;
         static const uint8_t COMMAND_TEMP_UP = 0x39;
         static const uint8_t COMMAND_TEMP_DOWN = 0x3A;
         static const uint8_t COMMAND_AUTO_DIM_ON = 0x40;
@@ -27,9 +34,10 @@ namespace esphome {
 
         // On air, the address written here becomes the XN297 sync 71 0F 55.
         static const uint8_t SYNC[3] = {0x55, 0x0F, 0x71};
-        static const uint8_t SCRAMBLE[11] = {0xBC, 0xE5, 0x66, 0x0D, 0xAE, 0x8C, 0x88, 0x12, 0x69, 0xEE, 0x1F};
-        static const uint8_t TRAILER = 0xAF;
-        static const uint8_t PACKET_LENGTH = 19;
+        using protocol::byte_to_kelvin;
+        using protocol::kelvin_to_byte;
+        using protocol::PACKET_LENGTH;
+        using protocol::PRESET_KELVIN;
 
         static const uint8_t TX_REPEATS = 20;
         // Steps of a fade are replaced by the next one soon, so fewer repeats are enough.
@@ -41,6 +49,7 @@ namespace esphome {
         // time belongs to the same press.
         static const uint32_t REMOTE_REPEAT_MS = 1000;
         static const uint32_t SYNC_WINDOW_MS = 300;
+        static const uint32_t LEARNING_TIMEOUT_MS = 60000;
 
         struct RemoteSettings {
             uint8_t address[5];
@@ -68,77 +77,31 @@ namespace esphome {
         static const float AUTO_TEMP_CURVE[][2] = {{0, 3000},  {6, 3000},  {8, 4000},  {10, 5000}, {16, 5000},
                                                    {18, 4000}, {20, 3200}, {22, 3000}, {24, 3000}};
 
-        // The remote's four color temperature presets.
-        static const float PRESET_KELVIN[4] = {3000.0f, 4000.0f, 5000.0f, 6500.0f};
-        static const float PRESET_BYTE[4] = {0.0f, 71.0f, 162.0f, 255.0f};
-
-        static uint8_t reverse_bits(uint8_t value) {
-            uint8_t reversed = 0;
-            for (uint8_t i = 0; i < 8; i++) {
-                reversed = (reversed << 1) | ((value >> i) & 1);
-            }
-            return reversed;
-        }
-
-        static uint16_t packet_crc(const uint8_t* data, uint8_t length) {
-            uint16_t crc = 0xB5D2;
-            for (uint8_t i = 0; i < length; i++) {
-                crc ^= data[i] << 8;
-                for (uint8_t bit = 0; bit < 8; bit++) {
-                    crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
-                }
-            }
-            return crc ^ 0xF494;
-        }
-
-        static uint8_t kelvin_to_byte(float kelvin) {
-            kelvin = clamp(kelvin, PRESET_KELVIN[0], PRESET_KELVIN[3]);
-            for (uint8_t i = 0; i < 3; i++) {
-                if (kelvin <= PRESET_KELVIN[i + 1]) {
-                    float position = (kelvin - PRESET_KELVIN[i]) / (PRESET_KELVIN[i + 1] - PRESET_KELVIN[i]);
-                    return (uint8_t) std::lround(PRESET_BYTE[i] + position * (PRESET_BYTE[i + 1] - PRESET_BYTE[i]));
-                }
-            }
-            return 0xFF;
-        }
-
         static const char* button_name(uint8_t command) {
             switch (command) {
-                // The brightness button sends 30 or 33.
-                case 0x30:
-                case 0x33:
+                case COMMAND_BRIGHTNESS_MODE:
+                case COMMAND_BRIGHTNESS_MODE_2:
                     return "brightness";
-                case 0x31:
+                case COMMAND_POWER:
                     return "power";
-                case 0x32:
+                case COMMAND_BACKLIGHT:
                     return "backlight";
-                case 0x34:
+                case COMMAND_TEMP_MODE:
                     return "temperature";
-                // 37 is + held in brightness mode: the level rises step by step.
-                case 0x35:
-                case 0x37:
+                case COMMAND_LEVEL_UP:
+                case COMMAND_LEVEL_UP_HELD:
                     return "brightness_up";
-                case 0x36:
+                case COMMAND_LEVEL_DOWN:
                     return "brightness_down";
-                case 0x39:
+                case COMMAND_TEMP_UP:
                     return "temperature_up";
-                case 0x3A:
+                case COMMAND_TEMP_DOWN:
                     return "temperature_down";
-                case 0x40:
+                case COMMAND_AUTO_DIM_ON:
                     return "auto_dim";
                 default:
                     return "other";
             }
-        }
-
-        static float byte_to_kelvin(uint8_t value) {
-            for (uint8_t i = 0; i < 3; i++) {
-                if (value <= PRESET_BYTE[i + 1]) {
-                    float position = (value - PRESET_BYTE[i]) / (PRESET_BYTE[i + 1] - PRESET_BYTE[i]);
-                    return PRESET_KELVIN[i] + position * (PRESET_KELVIN[i + 1] - PRESET_KELVIN[i]);
-                }
-            }
-            return PRESET_KELVIN[3];
         }
 
         void Quntis0213Light::setup() {
@@ -209,8 +172,8 @@ namespace esphome {
 
             // The value restored at boot, and the values taken from the remote, already match
             // what the lamp does, so they are not sent.
-            bool syncing = syncing_until_ms_ != 0 && millis() < syncing_until_ms_;
-            bool automatic = auto_temp_until_ms_ != 0 && millis() < auto_temp_until_ms_;
+            bool syncing = syncing_until_ms_ != 0 && (int32_t) (millis() - syncing_until_ms_) < 0;
+            bool automatic = auto_temp_until_ms_ != 0 && (int32_t) (millis() - auto_temp_until_ms_) < 0;
             // A color temperature chosen by hand stops following the time of day.
             if (!first_write_ && !syncing && !automatic && auto_temp_on_ && target_temp_ != sent_temp_) {
                 auto_temp_on_ = false;
@@ -271,6 +234,11 @@ namespace esphome {
         }
 
         void Quntis0213Light::set_backlight(bool on) {
+            // The remote's backlight button makes the lamp toggle, so nothing is sent when the state
+            // already matches.
+            if (on == get_backlight()) {
+                return;
+            }
             backlight_level_ = on ? backlight_on_level_ : 0x00;
             send_(COMMAND_BACKLIGHT);
             save_state_();
@@ -397,6 +365,7 @@ namespace esphome {
 
         void Quntis0213Light::start_learning() {
             learning_ = true;
+            learning_until_ms_ = millis() + LEARNING_TIMEOUT_MS;
             ESP_LOGI(TAG, "Learning: press a button on the remote near the module");
         }
 
@@ -411,23 +380,16 @@ namespace esphome {
             if (radio_ == nullptr) {
                 return;
             }
+            if (learning_ && (int32_t) (millis() - learning_until_ms_) >= 0) {
+                learning_ = false;
+                ESP_LOGW(TAG, "Learning stopped: no remote heard within %u s", (unsigned) (LEARNING_TIMEOUT_MS / 1000));
+            }
             while (radio_->available()) {
                 uint8_t packet[PACKET_LENGTH];
                 radio_->read(packet, PACKET_LENGTH);
 
-                uint16_t crc = packet_crc(packet, 16);
-                if (packet[16] != (crc >> 8) || packet[17] != (crc & 0xFF) || packet[18] != TRAILER) {
-                    continue;
-                }
-                uint8_t data[11];
-                uint8_t sum = 0;
-                for (uint8_t i = 0; i < 11; i++) {
-                    data[i] = reverse_bits(packet[5 + i] ^ SCRAMBLE[i]);
-                    if (i < 10) {
-                        sum += data[i];
-                    }
-                }
-                if (sum != data[10]) {
+                uint8_t data[protocol::DATA_LENGTH];
+                if (!protocol::decode(packet, data)) {
                     continue;
                 }
                 packets_received_++;
@@ -490,7 +452,9 @@ namespace esphome {
             if (command == COMMAND_BACKLIGHT) {
                 // The remote's backlight button always sends FF, and the lamp toggles its backlight.
                 backlight_level_ = backlight_level_ != 0 ? 0x00 : backlight_on_level_;
-            } else {
+            } else if (command == COMMAND_POWER || command == COMMAND_AUTO_DIM_ON) {
+                // The remote does not follow the backlight's toggles, so its byte is only taken from
+                // the buttons that set the backlight: power, and automatic dimming that turns it on.
                 backlight_level_ = data[7];
                 if (backlight_level_ != 0) {
                     backlight_on_level_ = backlight_level_;
@@ -499,15 +463,19 @@ namespace esphome {
             if (command == COMMAND_AUTO_DIM_ON) {
                 auto_dim_on_ = true;
             } else if (command == COMMAND_AUTO_DIM_OFF || command == COMMAND_POWER || command == COMMAND_LEVEL_UP ||
-                       command == COMMAND_LEVEL_DOWN || command == COMMAND_BRIGHTNESS_MODE || command == 0x33 ||
-                       command == 0x37) {
+                       command == COMMAND_LEVEL_DOWN || command == COMMAND_BRIGHTNESS_MODE ||
+                       command == COMMAND_BRIGHTNESS_MODE_2 || command == COMMAND_LEVEL_UP_HELD) {
                 auto_dim_on_ = false;
             }
             if (level == 0) {
                 auto_dim_on_ = false;
             }
-            if (temp != sent_temp_ && command != COMMAND_POWER) {
+            if (command == COMMAND_TEMP_MODE || command == COMMAND_TEMP_UP || command == COMMAND_TEMP_DOWN) {
+                // A color temperature chosen on the remote stops following the time of day.
                 auto_temp_on_ = false;
+            } else if (auto_temp_on_ && temp != sent_temp_) {
+                // Other buttons resend the remote's own temperature: take it back right away.
+                auto_temp_check_ms_ = 0;
             }
             save_state_();
 
@@ -517,6 +485,11 @@ namespace esphome {
             if (on) {
                 sent_level_ = level;
             }
+            // The remote's values replace a command that was still waiting to be sent.
+            pending_ = false;
+            target_on_ = sent_on_;
+            target_level_ = sent_level_;
+            target_temp_ = sent_temp_;
             if (state_ == nullptr) {
                 return;
             }
@@ -548,7 +521,7 @@ namespace esphome {
                 ESP_LOGW(TAG, "No remote configured: learn the remote first");
                 return;
             }
-            uint8_t data[11];
+            uint8_t data[10];
             std::copy(device_id_.begin(), device_id_.end(), data);
             data[4] = command;
             // A level of 00 turns off the main light only: the backlight keeps its own byte.
@@ -557,21 +530,8 @@ namespace esphome {
             data[7] = backlight_level_;
             data[8] = 0x00;
             data[9] = counter_++;
-            uint8_t sum = 0;
-            for (uint8_t i = 0; i < 10; i++) {
-                sum += data[i];
-            }
-            data[10] = sum;
-
             uint8_t packet[PACKET_LENGTH];
-            std::copy(device_address_.begin(), device_address_.end(), packet);
-            for (uint8_t i = 0; i < 11; i++) {
-                packet[5 + i] = reverse_bits(data[i]) ^ SCRAMBLE[i];
-            }
-            uint16_t crc = packet_crc(packet, 16);
-            packet[16] = crc >> 8;
-            packet[17] = crc & 0xFF;
-            packet[18] = TRAILER;
+            protocol::encode(device_address_.data(), data, packet);
 
             ESP_LOGD(TAG, "Command %02X: level %02X, temp %02X, backlight %02X", command, data[5], data[6], data[7]);
             bool fading = state_ != nullptr && state_->is_transformer_active();

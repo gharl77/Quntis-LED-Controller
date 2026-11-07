@@ -53,6 +53,7 @@ namespace esphome {
             }
 #endif
             base_->init();
+            base_->add_handler_without_auth(&captive_forwarder_);
             base_->add_handler(this);
         }
 
@@ -95,10 +96,13 @@ namespace esphome {
                 }
             }
 
+            char escaped_name[64 * JSON_ESCAPE_MAX_EXPANSION + 1];
+            json_escape_into_buffer(escaped_name, StringRef(App.get_friendly_name()));
+
             char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
             get_mac_address_pretty_into_buffer(mac);
 
-            char buffer[720];
+            char buffer[1024];
             snprintf(buffer, sizeof(buffer),
                      "{\"on\":%d,\"brightness\":%d,\"kelvin\":%d,\"backlight\":%d,\"auto_dim\":%d,"
                      "\"radio\":%d,\"channel\":%u,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\","
@@ -108,7 +112,7 @@ namespace esphome {
                      (int) std::lround(1000000.0f / values.get_color_temperature()), output_()->get_backlight(),
                      output_()->get_auto_dim(), !output_()->is_failed(), output_()->get_channel(), escaped_ssid,
                      ip, wifi_component->wifi_rssi(), mac, (unsigned) (millis() / 1000),
-                     (unsigned) esp_get_free_heap_size(), App.get_friendly_name().c_str(), ESPHOME_VERSION,
+                     (unsigned) esp_get_free_heap_size(), escaped_name, ESPHOME_VERSION,
                      scanning_.load(), output_()->has_remote(), output_()->is_learning(),
                      output_()->last_remote_age(), std::max(1, (int) std::lround(output_()->get_min_level() * 100.0f / 255.0f)), output_()->last_remote_values()[0],
                      output_()->last_remote_values()[1], output_()->last_remote_values()[2],
@@ -148,32 +152,28 @@ namespace esphome {
             scanning_ = true;
         }
 
-        bool QuntisWeb::canHandle(AsyncWebServerRequest* request) const {
-            // Connected, this page answers everything, so web_server's own API stays closed.
-            if (wifi::global_wifi_component->is_connected()) {
-                return true;
-            }
+        bool QuntisWeb::CaptiveForwarder::canHandle(AsyncWebServerRequest* request) const {
 #ifdef USE_CAPTIVE_PORTAL
-            // Otherwise web_server would hide the captive portal's WiFi page.
             auto* portal = captive_portal::global_captive_portal;
-            return portal != nullptr && portal->is_active() && request->method() == HTTP_GET;
+            return !wifi::global_wifi_component->is_connected() && portal != nullptr && portal->is_active() &&
+                   request->method() == HTTP_GET;
 #else
             return false;
 #endif
         }
 
-        void QuntisWeb::handleRequest(AsyncWebServerRequest* request) {
-            if (!wifi::global_wifi_component->is_connected()) {
+        void QuntisWeb::CaptiveForwarder::handleRequest(AsyncWebServerRequest* request) {
 #ifdef USE_CAPTIVE_PORTAL
-                auto* portal = captive_portal::global_captive_portal;
-                if (portal != nullptr && portal->is_active()) {
-                    portal->handleRequest(request);
-                    return;
-                }
+            captive_portal::global_captive_portal->handleRequest(request);
 #endif
-                request->send(404);
-                return;
-            }
+        }
+
+        bool QuntisWeb::canHandle(AsyncWebServerRequest* request) const {
+            // Connected, this page answers everything, so web_server's own API stays closed.
+            return wifi::global_wifi_component->is_connected();
+        }
+
+        void QuntisWeb::handleRequest(AsyncWebServerRequest* request) {
 
             char buffer[AsyncWebServerRequest::URL_BUF_SIZE];
             StringRef url = request->url_to(buffer);

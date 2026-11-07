@@ -5,7 +5,7 @@ substitutions:
   friendly_name: "Lampe Quntis"
   # The installer builds from this repository's files. Adopting the device in ESPHome
   # Builder fetches them from GitHub instead.
-  components_source: github://gharl77/Quntis-LED-Controller@diagnostic/li-hy-0213-gy
+  components_source: github://gharl77/Quntis-LED-Controller@main
   # Set by the GitHub build. Home Assistant offers an update when the published one differs.
   version: dev
 
@@ -29,7 +29,7 @@ external_components:
 
 # Lets ESPHome Builder offer to adopt the device and customize it.
 dashboard_import:
-  package_import_url: github://gharl77/Quntis-LED-Controller/firmware/lampe-quntis.yaml@diagnostic/li-hy-0213-gy
+  package_import_url: github://gharl77/Quntis-LED-Controller/firmware/lampe-quntis.yaml@main
   import_full_config: true
 
 logger:

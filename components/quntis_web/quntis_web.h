@@ -37,6 +37,14 @@ namespace esphome {
             bool isRequestHandlerTrivial() const override { return false; }
 
            protected:
+            // Forwards the captive portal's requests outside the page's password check, so the
+            // backup network's page stays open. web_server would hide it otherwise.
+            class CaptiveForwarder : public AsyncWebHandler {
+               public:
+                bool canHandle(AsyncWebServerRequest* request) const override;
+                void handleRequest(AsyncWebServerRequest* request) override;
+            };
+
             quntis_0213::Quntis0213Light* output_() const;
             void refresh_state_();
             void start_scan_();
@@ -47,6 +55,7 @@ namespace esphome {
             void handle_presets_(AsyncWebServerRequest* request);
 
             web_server_base::WebServerBase* base_;
+            CaptiveForwarder captive_forwarder_;
             light::LightState* light_{nullptr};
             const char* yaml_password_{nullptr};
             char password_[65]{};

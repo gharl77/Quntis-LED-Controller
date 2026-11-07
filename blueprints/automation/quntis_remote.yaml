@@ -5,7 +5,7 @@ blueprint:
     The lamp still reacts to the remote as usual. Leave a button empty to do nothing more.
     Holding a button also repeats some short presses, as the remote steps the brightness or color temperature.
   domain: automation
-  source_url: https://github.com/gharl77/Quntis-LED-Controller/blob/diagnostic/li-hy-0213-gy/blueprints/automation/quntis_remote.yaml
+  source_url: https://github.com/gharl77/Quntis-LED-Controller/blob/main/blueprints/automation/quntis_remote.yaml
   input:
     remote:
       name: Remote

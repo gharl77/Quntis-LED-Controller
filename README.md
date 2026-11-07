@@ -54,11 +54,11 @@ The remote has these controls:
 - **Fades:** brightness and color temperature change over 1 second, like a smart bulb. Set `default_transition_length: 0s` to change at once. How smooth this looks has not been checked.
 - **After a restart:** the ESP32 shows the last known state again.
 - **Timer and presets:** they run on the ESP32, so they work even when Home Assistant is down. Add your own presets as template buttons: each one also shows on the web page.
-- **Time of day:** the color temperature goes from 3000 K at night to 5000 K between 10:00 and 16:00, with smooth changes in between. Choosing a color temperature yourself turns this off. It needs the time from Home Assistant.
+- **Time of day:** the color temperature goes from 3000 K at night to 5000 K between 10:00 and 16:00, with smooth changes in between. Choosing a color temperature yourself, including with the remote's color temperature buttons, turns this off. Other remote buttons send the remote's own color temperature, so the lamp follows the time of day again a moment later. It needs the time from Home Assistant.
 
 ### Remote actions
 
-[![Open your Home Assistant instance and show the blueprint import dialog](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fgharl77%2FQuntis-LED-Controller%2Fblob%2Fdiagnostic%2Fli-hy-0213-gy%2Fblueprints%2Fautomation%2Fquntis_remote.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fgharl77%2FQuntis-LED-Controller%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fquntis_remote.yaml)
 
 The [Quntis remote actions](blueprints/automation/quntis_remote.yaml) blueprint lets you pick an action for each button, without writing YAML.
 
@@ -78,7 +78,7 @@ The ESP32 also serves its own page, so the lamp works without Home Assistant. In
 |---|---|
 | Light | On/off, brightness, color temperature, backlight, automatic dimming, time of day, timer and your presets |
 | Information | Remote status, network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address and ESPHome version |
-| Learn the remote | Pairs the next remote heard |
+| Learn the remote | Pairs the next remote heard within 60 seconds |
 | Change WiFi | Scans nearby networks, then saves a new network and password |
 | Change password | Replaces the page's password |
 | Restart | Restarts the ESP32 |
@@ -218,7 +218,7 @@ After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes,
 | `40` | Automatic dimming |
 | `3E` | Automatic dimming off, from the ESP32 |
 
-- **Backlight button:** the remote always sends `FF`, and the lamp toggles its backlight. A packet from the ESP32 sets the value it carries.
+- **Backlight button:** the remote always sends `FF`, and the lamp toggles its backlight. The ESP32 sends this command only when the backlight must change, and it takes the backlight byte from the remote only for power and automatic dimming.
 - **Automatic dimming:** the remote sends `40` on every press, and the mode stays on. Changing the brightness stops it.
 - **Modes:** + and − act on the last mode button pressed. In automatic dimming mode, they also send `40`.
 - **Held buttons:** the remote either keeps the same counter or sends a new press every 0.3 to 0.5 s.

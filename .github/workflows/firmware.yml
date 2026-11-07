@@ -2,8 +2,8 @@ name: Firmware
 
 on:
   push:
-    branches: [ diagnostic/li-hy-0213-gy ]
-    paths: [ "components/**", "firmware/**", "docs/**", ".github/workflows/firmware.yml" ]
+    branches: [ main ]
+    paths: [ "components/**", "firmware/**", "docs/**", "tests/**", ".github/workflows/firmware.yml" ]
   workflow_dispatch:
 
 permissions:
@@ -19,7 +19,17 @@ env:
   VERSION: 1.1.${{ github.run_number }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test the packet code
+        run: |
+          g++ -std=c++17 -Wall -Werror -I components tests/test_protocol.cpp -o test_protocol
+          ./test_protocol
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

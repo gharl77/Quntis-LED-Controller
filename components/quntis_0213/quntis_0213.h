@@ -127,6 +127,7 @@ namespace esphome {
             uint32_t syncing_until_ms_{0};
             int16_t last_remote_counter_{-1};
             uint32_t last_remote_ms_{0};
+            uint32_t learning_until_ms_{0};
             uint8_t last_remote_values_[4]{};
             uint32_t packets_received_{0};
             uint32_t presses_received_{0};
