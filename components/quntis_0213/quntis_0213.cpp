@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
@@ -43,6 +44,8 @@ namespace esphome {
         // Steps of a fade are replaced by the next one soon, so fewer repeats are enough.
         static const uint8_t TX_REPEATS_FADE = 5;
         static const uint32_t TX_GAP_MS = 4;
+        // Packets sent per loop pass, about 12 ms of the loop at most.
+        static const uint8_t TX_PACKETS_PER_LOOP = 4;
         static const uint32_t MIN_SEND_INTERVAL_MS = 100;
 
         // The remote repeats each packet in a burst. A packet with the same counter within this
@@ -115,6 +118,7 @@ namespace esphome {
             state_pref_ = global_preferences->make_preference<StateSettings>(fnv1_hash("quntis_0213_state"));
             StateSettings saved{};
             if (state_pref_.load(&saved)) {
+                std::memcpy(saved_settings_, &saved, sizeof(saved_settings_));
                 backlight_level_ = saved.backlight_level;
                 backlight_on_level_ = saved.backlight_on_level != 0 ? saved.backlight_on_level : 0xFF;
                 auto_dim_on_ = saved.auto_dim == 1;
@@ -191,6 +195,7 @@ namespace esphome {
         }
 
         void Quntis0213Light::loop() {
+            transmit_();
             receive_();
             if (press_packets_ != 0 && millis() - last_remote_ms_ > PRESS_END_MS) {
                 finish_press_();
@@ -260,6 +265,11 @@ namespace esphome {
         void Quntis0213Light::save_state_() {
             StateSettings settings{backlight_level_, backlight_on_level_, (uint8_t) (auto_dim_on_ ? 1 : 0),
                                    (uint8_t) (auto_temp_on_ ? 1 : 0)};
+            static_assert(sizeof(settings) == sizeof(saved_settings_), "settings size");
+            if (std::memcmp(&settings, saved_settings_, sizeof(settings)) == 0) {
+                return;
+            }
+            std::memcpy(saved_settings_, &settings, sizeof(settings));
             state_pref_.save(&settings);
         }
 
@@ -521,6 +531,21 @@ namespace esphome {
                 ESP_LOGW(TAG, "No remote configured: learn the remote first");
                 return;
             }
+            // A brightness or color temperature step that is already waiting goes out with the latest
+            // values anyway. Other commands are all kept: the lamp toggles its backlight on each 32.
+            bool carries_state = command == COMMAND_LEVEL_UP || command == COMMAND_LEVEL_DOWN ||
+                                 command == COMMAND_TEMP_UP || command == COMMAND_TEMP_DOWN;
+            if (carries_state && std::find(tx_queue_, tx_queue_ + tx_queued_, command) != tx_queue_ + tx_queued_) {
+                return;
+            }
+            if (tx_queued_ == TX_QUEUE_SIZE) {
+                ESP_LOGW(TAG, "Too many commands at once, %02X dropped", command);
+                return;
+            }
+            tx_queue_[tx_queued_++] = command;
+        }
+
+        void Quntis0213Light::build_packet_(uint8_t command) {
             uint8_t data[10];
             std::copy(device_id_.begin(), device_id_.end(), data);
             data[4] = command;
@@ -530,18 +555,39 @@ namespace esphome {
             data[7] = backlight_level_;
             data[8] = 0x00;
             data[9] = counter_++;
-            uint8_t packet[PACKET_LENGTH];
-            protocol::encode(device_address_.data(), data, packet);
-
-            ESP_LOGD(TAG, "Command %02X: level %02X, temp %02X, backlight %02X", command, data[5], data[6], data[7]);
+            protocol::encode(device_address_.data(), data, tx_packet_);
             bool fading = state_ != nullptr && state_->is_transformer_active();
-            uint8_t repeats = fading ? TX_REPEATS_FADE : TX_REPEATS;
-            radio_->stopListening();
-            for (uint8_t i = 0; i < repeats; i++) {
-                radio_->write(packet, PACKET_LENGTH);
-                delay(TX_GAP_MS);
+            tx_left_ = fading ? TX_REPEATS_FADE : TX_REPEATS;
+            ESP_LOGD(TAG, "Command %02X: level %02X, temp %02X, backlight %02X", command, data[5], data[6], data[7]);
+        }
+
+        void Quntis0213Light::transmit_() {
+            if (radio_ == nullptr || (tx_left_ == 0 && tx_queued_ == 0)) {
+                return;
             }
-            radio_->startListening();
+            for (uint8_t sent = 0; sent < TX_PACKETS_PER_LOOP; sent++) {
+                if (tx_left_ == 0) {
+                    if (tx_queued_ == 0) {
+                        break;
+                    }
+                    if (sent == 0) {
+                        radio_->stopListening();
+                    }
+                    build_packet_(tx_queue_[0]);
+                    std::copy(tx_queue_ + 1, tx_queue_ + tx_queued_, tx_queue_);
+                    tx_queued_--;
+                }
+                if (sent > 0 || millis() - tx_last_ms_ < TX_GAP_MS) {
+                    delay(TX_GAP_MS);
+                }
+                radio_->write(tx_packet_, PACKET_LENGTH);
+                tx_last_ms_ = millis();
+                tx_left_--;
+            }
+            if (tx_left_ == 0 && tx_queued_ == 0) {
+                // Back to listening for the remote once everything is out.
+                radio_->startListening();
+            }
         }
 
     }  // namespace quntis_0213

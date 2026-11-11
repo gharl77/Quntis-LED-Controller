@@ -18,7 +18,10 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
-#include "page.h"
+
+// The compressed page, generated at build time from page.h.
+extern const uint8_t QUNTIS_PAGE_GZ[];
+extern const size_t QUNTIS_PAGE_GZ_SIZE;
 
 namespace esphome {
     namespace quntis_web {
@@ -82,6 +85,9 @@ namespace esphome {
 
         void QuntisWeb::refresh_state_() {
             const auto& values = light_->remote_values;
+            // The color temperature is 0 until the light has one, right after the first boot.
+            float mireds = values.get_color_temperature();
+            int kelvin = mireds > 0.0f ? (int) std::lround(1000000.0f / mireds) : 4000;
             auto* wifi_component = wifi::global_wifi_component;
 
             char ssid[wifi::SSID_BUFFER_SIZE];
@@ -102,7 +108,7 @@ namespace esphome {
             char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
             get_mac_address_pretty_into_buffer(mac);
 
-            char buffer[1024];
+            char buffer[1280];
             snprintf(buffer, sizeof(buffer),
                      "{\"on\":%d,\"brightness\":%d,\"kelvin\":%d,\"backlight\":%d,\"auto_dim\":%d,"
                      "\"radio\":%d,\"channel\":%u,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\","
@@ -110,7 +116,7 @@ namespace esphome {
                      "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d,\"timer\":%u,\"auto_temp\":%d,\"clock\":%d,"
                      "\"fw\":\"%s\",\"repo\":\"%s\"}",
                      values.is_on(), (int) std::lround(values.get_brightness() * 100.0f),
-                     (int) std::lround(1000000.0f / values.get_color_temperature()), output_()->get_backlight(),
+                     kelvin, output_()->get_backlight(),
                      output_()->get_auto_dim(), !output_()->is_failed(), output_()->get_channel(), escaped_ssid,
                      ip, wifi_component->wifi_rssi(), mac, (unsigned) (millis() / 1000),
                      (unsigned) esp_get_free_heap_size(), escaped_name, ESPHOME_VERSION,
@@ -181,7 +187,10 @@ namespace esphome {
 
             if (request->method() == HTTP_GET) {
                 if (url == "/") {
-                    request->send(200, "text/html", PAGE);
+                    auto* response = request->beginResponse(200, "text/html; charset=utf-8", QUNTIS_PAGE_GZ,
+                                                            QUNTIS_PAGE_GZ_SIZE);
+                    response->addHeader("Content-Encoding", "gzip");
+                    request->send(response);
                 } else if (url == "/api/state") {
                     std::string json;
                     {

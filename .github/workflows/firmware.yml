@@ -13,7 +13,8 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # A build that already published a release must also deploy it.
+  cancel-in-progress: false
 
 jobs:
   test:

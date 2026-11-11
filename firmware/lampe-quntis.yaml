@@ -94,7 +94,12 @@ light:
     default_transition_length: 1s
     time_id: heure
     on_remote:
-      - lambda: 'id(telecommande).trigger(button);'
+      - lambda: |-
+          id(telecommande).trigger(button);
+          auto *v = static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->last_remote_values();
+          char text[12];
+          snprintf(text, sizeof(text), "%02X %02X %02X %02X", v[0], v[1], v[2], v[3]);
+          id(dernier_paquet).publish_state(text);
 
     # DOIT ESP32 DevKit V1 wiring
     ce_pin: 17
@@ -193,6 +198,8 @@ sensor:
     entity_category: diagnostic
     accuracy_decimals: 0
     update_interval: 5s
+    filters:
+      - delta: 0.5
     lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_packets_received();'
   - platform: template
     name: "Appuis de la télécommande"
@@ -200,6 +207,8 @@ sensor:
     entity_category: diagnostic
     accuracy_decimals: 0
     update_interval: 5s
+    filters:
+      - delta: 0.5
     lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_presses_received();'
   - platform: template
     name: "Durée du dernier appui"
@@ -208,6 +217,8 @@ sensor:
     unit_of_measurement: ms
     accuracy_decimals: 0
     update_interval: 5s
+    filters:
+      - delta: 0.5
     lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_last_press_ms();'
   - platform: template
     name: "Paquets du dernier appui"
@@ -215,17 +226,15 @@ sensor:
     entity_category: diagnostic
     accuracy_decimals: 0
     update_interval: 5s
+    filters:
+      - delta: 0.5
     lambda: 'return static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->get_last_press_packets();'
 
 # The last remote packet: command, brightness, color temperature and backlight.
 text_sensor:
+  # Updated on each press by on_remote, instead of being polled.
   - platform: template
+    id: dernier_paquet
     name: "Dernier paquet de la télécommande"
     icon: mdi:code-brackets
     entity_category: diagnostic
-    update_interval: 1s
-    lambda: |-
-      auto *v = static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->last_remote_values();
-      char text[12];
-      snprintf(text, sizeof(text), "%02X %02X %02X %02X", v[0], v[1], v[2], v[3]);
-      return std::string(text);

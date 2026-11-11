@@ -9,6 +9,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
+#include "protocol.h"
 #ifdef USE_TIME
 #include "esphome/components/time/real_time_clock.h"
 #endif
@@ -80,7 +81,10 @@ namespace esphome {
 
            protected:
             void apply_state_();
+            // Queues a command. Its packet is built when it goes out, from the latest state.
             void send_(uint8_t command);
+            void transmit_();
+            void build_packet_(uint8_t command);
             void receive_();
             void handle_remote_(const uint8_t* data);
             void save_state_();
@@ -116,6 +120,18 @@ namespace esphome {
             bool target_on_{false};
             uint8_t target_level_{0xFF};
             uint8_t target_temp_{0x00};
+
+            // Commands waiting to go out, and the packet going out now. Sending in small slices keeps the
+            // main loop free, instead of blocking it for about 80 ms per command.
+            static const uint8_t TX_QUEUE_SIZE = 6;
+            uint8_t tx_queue_[TX_QUEUE_SIZE]{};
+            uint8_t tx_queued_{0};
+            uint8_t tx_packet_[protocol::PACKET_LENGTH]{};
+            uint8_t tx_left_{0};
+            uint32_t tx_last_ms_{0};
+
+            // The settings last written to flash, so unchanged ones are not written again.
+            uint8_t saved_settings_[4]{0xFF, 0xFF, 0xFF, 0xFF};
 
             uint8_t counter_{0};
             bool first_write_{true};

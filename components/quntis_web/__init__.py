@@ -1,4 +1,6 @@
+import gzip
 import logging
+from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -42,6 +44,18 @@ async def to_code(config):
     base = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     var = cg.new_Pvariable(config[CONF_ID], base)
     await cg.register_component(var, config)
+
+    # The page is sent compressed: about a third of its size, so it loads faster.
+    source = (Path(__file__).parent / "page.h").read_text(encoding="utf-8")
+    html = source[source.index('R"QUNTIS(') + len('R"QUNTIS(') : source.index(')QUNTIS"')]
+    page = gzip.compress(html.encode("utf-8"), compresslevel=9, mtime=0)
+    cg.add_global(
+        cg.RawStatement(
+            "extern const uint8_t QUNTIS_PAGE_GZ[] = {"
+            + ",".join(str(b) for b in page)
+            + f"}};\nextern const size_t QUNTIS_PAGE_GZ_SIZE = {len(page)};"
+        )
+    )
 
     light_state = await cg.get_variable(config[CONF_LIGHT_ID])
     cg.add(var.set_light(light_state))

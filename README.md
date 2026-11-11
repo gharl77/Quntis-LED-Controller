@@ -47,7 +47,7 @@ The remote has these controls:
 | Timer | Turns the lamp off after a number of minutes. `0` cancels |
 | Time-of-day switch | Makes the light warm at night and cooler in the middle of the day |
 | Firmware update | Offers new versions of the ready-made firmware, with the quick install |
-| Diagnostic sensors | Radio packets received, presses recognized, the last press's length, and the last packet's values |
+| Diagnostic sensors | Radio packets received, presses recognized, the last press's length, and the last packet's values. They update Home Assistant only when they change |
 
 - **Absolute values:** the lamp accepts any brightness and color temperature, not only the remote's presets. There is no step counting and no calibration.
 - **The remote stays in sync:** the ESP32 listens to the remote, so Home Assistant follows what you change with it.
@@ -86,7 +86,7 @@ The ESP32 also serves its own page, so the lamp works without Home Assistant. In
 
 The firmware version links to its release notes. The footer links to the source code and to the issue tracker.
 
-The page is in French and English. It follows the browser's language, and the menu at the top changes it.
+The page is in French and English. It follows the browser's language, and the menu at the top changes it. The ESP32 sends it compressed, about 7 kB, and the page stops refreshing while its browser tab is hidden.
 
 ## What you need
 
@@ -193,6 +193,8 @@ What finally worked:
 ## Protocol
 
 The radio settings are channel 80 (2480 MHz), 1 Mbps, with the nRF24 CRC disabled. The lamp only receives. The remote sends each press about 14 times, with the same counter.
+
+The ESP32 sends each command 20 times, 4 ms apart, or 5 times during a fade. It spreads them over a few passes of its main loop, so it stays responsive while sending. A brightness or color temperature step still waiting to go out is merged with the next one, and always carries the latest values.
 
 After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes, a 2-byte CRC, then `AF`. To decode a data byte, XOR it with the XN297 scramble table, then reverse its bits.
 

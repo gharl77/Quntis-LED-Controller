@@ -1,5 +1,8 @@
 #pragma once
 
+// The web page. The build sends it compressed: quntis_web/__init__.py reads it from this file and
+// gzips it into QUNTIS_PAGE_GZ, so this header is not compiled into the firmware.
+
 namespace esphome {
     namespace quntis_web {
 
@@ -167,7 +170,9 @@ function render(s){
  if(wasScanning&&!scanning)nets();
  wasScanning=scanning;scanLabel();
 }
-async function poll(){try{render(await(await fetch('/api/state')).json())}catch(e){}}
+// A hidden tab does not poll, which spares the ESP32 and the network.
+async function poll(){if(document.hidden)return;try{render(await(await fetch('/api/state')).json())}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});
 function showNets(){
  const ul=$('nets');ul.replaceChildren();
  for(const n of lastNets){const li=document.createElement('li'),b=document.createElement('button'),a=document.createElement('span'),c=document.createElement('span');
