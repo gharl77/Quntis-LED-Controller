@@ -47,6 +47,10 @@ namespace esphome {
         // Packets sent per loop pass, about 12 ms of the loop at most.
         static const uint8_t TX_PACKETS_PER_LOOP = 4;
         static const uint32_t MIN_SEND_INTERVAL_MS = 100;
+        // The radio holds 3 packets. A limit keeps a radio that stopped answering from holding the loop.
+        static const uint8_t RX_PACKETS_PER_LOOP = 6;
+        // How often the radio is checked, and tried again while it does not answer.
+        static const uint32_t RADIO_CHECK_MS = 10000;
 
         // The remote repeats each packet in a burst. A packet with the same counter within this
         // time belongs to the same press.
@@ -127,10 +131,21 @@ namespace esphome {
 
             SPI.begin(clk_pin_, miso_pin_, mosi_pin_, -1);
             radio_ = new RF24(ce_pin_, cs_pin_);
-            if (!radio_->begin()) {
+            counter_ = (uint8_t) random_uint32();
+            radio_ok_ = configure_radio_();
+            if (!radio_ok_) {
+                // Not marked as failed: the loop keeps trying, so a fixed wire needs no restart.
                 ESP_LOGE(TAG, "nRF24L01 not responding, check the wiring");
-                this->mark_failed();
-                return;
+                this->status_set_error();
+            }
+            if (!has_remote()) {
+                ESP_LOGW(TAG, "No remote configured yet: start learning and press a button on the remote");
+            }
+        }
+
+        bool Quntis0213Light::configure_radio_() {
+            if (!radio_->begin()) {
+                return false;
             }
             radio_->setAutoAck(false);
             radio_->disableCRC();
@@ -143,9 +158,36 @@ namespace esphome {
             radio_->openWritingPipe(SYNC);
             radio_->openReadingPipe(1, SYNC);
             radio_->startListening();
-            counter_ = (uint8_t) random_uint32();
-            if (!has_remote()) {
-                ESP_LOGW(TAG, "No remote configured yet: start learning and press a button on the remote");
+            radio_->failureDetected = false;
+            return true;
+        }
+
+        // A module that loses power forgets its settings, and one that stops answering makes every
+        // send wait. This notices both and sets the radio up again when it is back.
+        void Quntis0213Light::check_radio_() {
+            uint32_t now = millis();
+            if (now - radio_check_ms_ < RADIO_CHECK_MS) {
+                return;
+            }
+            radio_check_ms_ = now;
+            if (radio_ok_) {
+                // Read twice, so one bad read does not interrupt a command.
+                if (!radio_->failureDetected && (radio_->isChipConnected() || radio_->isChipConnected())) {
+                    return;
+                }
+                radio_ok_ = false;
+                tx_left_ = 0;
+                tx_queued_ = 0;
+                ESP_LOGE(TAG, "nRF24L01 stopped responding, check the wiring");
+                this->status_set_error();
+                return;
+            }
+            if (configure_radio_()) {
+                radio_ok_ = true;
+                tx_left_ = 0;
+                tx_queued_ = 0;
+                ESP_LOGI(TAG, "nRF24L01 responding again");
+                this->status_clear_error();
             }
         }
 
@@ -156,6 +198,7 @@ namespace esphome {
             ESP_LOGCONFIG(TAG, "  Channel: %u", channel_);
             ESP_LOGCONFIG(TAG, "  Minimum level: %02X", min_level_);
             ESP_LOGCONFIG(TAG, "  Remote: %s", has_remote() ? "configured" : "not configured");
+            ESP_LOGCONFIG(TAG, "  Radio: %s", radio_ok_ ? "OK" : "not responding");
         }
 
         light::LightTraits Quntis0213Light::get_traits() {
@@ -195,6 +238,7 @@ namespace esphome {
         }
 
         void Quntis0213Light::loop() {
+            check_radio_();
             transmit_();
             receive_();
             if (press_packets_ != 0 && millis() - last_remote_ms_ > PRESS_END_MS) {
@@ -216,6 +260,8 @@ namespace esphome {
                 sent_level_ = target_level_;
                 sent_temp_ = target_temp_;
                 auto_dim_on_ = false;
+                // A lamp just turned on takes the time-of-day temperature without waiting.
+                auto_temp_check_ms_ = 0;
                 send_(COMMAND_POWER);
                 save_state_();
                 return;
@@ -348,6 +394,10 @@ namespace esphome {
                 (auto_temp_check_ms_ != 0 && now_ms - auto_temp_check_ms_ < AUTO_TEMP_INTERVAL_MS)) {
                 return;
             }
+            // A fade in progress finishes first, so it keeps its own length.
+            if (state_->is_transformer_active()) {
+                return;
+            }
             auto_temp_check_ms_ = now_ms;
             ESPTime now = clock_->now();
             if (!now.is_valid()) {
@@ -387,14 +437,15 @@ namespace esphome {
         }
 
         void Quntis0213Light::receive_() {
-            if (radio_ == nullptr) {
-                return;
-            }
             if (learning_ && (int32_t) (millis() - learning_until_ms_) >= 0) {
                 learning_ = false;
                 ESP_LOGW(TAG, "Learning stopped: no remote heard within %u s", (unsigned) (LEARNING_TIMEOUT_MS / 1000));
             }
-            while (radio_->available()) {
+            // Nothing arrives while the radio is sending.
+            if (!radio_ok_ || tx_left_ != 0 || tx_queued_ != 0) {
+                return;
+            }
+            for (uint8_t read = 0; read < RX_PACKETS_PER_LOOP && radio_->available(); read++) {
                 uint8_t packet[PACKET_LENGTH];
                 radio_->read(packet, PACKET_LENGTH);
 
@@ -524,7 +575,8 @@ namespace esphome {
         }
 
         void Quntis0213Light::send_(uint8_t command) {
-            if (radio_ == nullptr) {
+            if (!radio_ok_) {
+                ESP_LOGW(TAG, "Command %02X not sent: the nRF24L01 does not respond", command);
                 return;
             }
             if (!has_remote()) {
@@ -562,7 +614,7 @@ namespace esphome {
         }
 
         void Quntis0213Light::transmit_() {
-            if (radio_ == nullptr || (tx_left_ == 0 && tx_queued_ == 0)) {
+            if (!radio_ok_ || (tx_left_ == 0 && tx_queued_ == 0)) {
                 return;
             }
             for (uint8_t sent = 0; sent < TX_PACKETS_PER_LOOP; sent++) {
@@ -583,6 +635,12 @@ namespace esphome {
                 radio_->write(tx_packet_, PACKET_LENGTH);
                 tx_last_ms_ = millis();
                 tx_left_--;
+                if (radio_->failureDetected) {
+                    // The radio stopped answering: check it now instead of waiting on each packet.
+                    radio_check_ms_ = tx_last_ms_ - RADIO_CHECK_MS;
+                    check_radio_();
+                    return;
+                }
             }
             if (tx_left_ == 0 && tx_queued_ == 0) {
                 // Back to listening for the remote once everything is out.

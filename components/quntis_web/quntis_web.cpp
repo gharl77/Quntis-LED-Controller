@@ -117,7 +117,7 @@ namespace esphome {
                      "\"fw\":\"%s\",\"repo\":\"%s\"}",
                      values.is_on(), (int) std::lround(values.get_brightness() * 100.0f),
                      kelvin, output_()->get_backlight(),
-                     output_()->get_auto_dim(), !output_()->is_failed(), output_()->get_channel(), escaped_ssid,
+                     output_()->get_auto_dim(), output_()->is_radio_ok(), output_()->get_channel(), escaped_ssid,
                      ip, wifi_component->wifi_rssi(), mac, (unsigned) (millis() / 1000),
                      (unsigned) esp_get_free_heap_size(), escaped_name, ESPHOME_VERSION,
                      scanning_.load(), output_()->has_remote(), output_()->is_learning(),
@@ -190,6 +190,8 @@ namespace esphome {
                     auto* response = request->beginResponse(200, "text/html; charset=utf-8", QUNTIS_PAGE_GZ,
                                                             QUNTIS_PAGE_GZ_SIZE);
                     response->addHeader("Content-Encoding", "gzip");
+                    // Keeps a browser from showing the old page after an update.
+                    response->addHeader("Cache-Control", "no-cache");
                     request->send(response);
                 } else if (url == "/api/state") {
                     std::string json;
@@ -277,10 +279,10 @@ namespace esphome {
                 if (!on.empty()) {
                     call.set_state(on == "1");
                 }
-                if (brightness.has_value()) {
+                if (brightness.has_value() && std::isfinite(*brightness)) {
                     call.set_brightness(clamp(*brightness, 0.0f, 100.0f) / 100.0f);
                 }
-                if (kelvin.has_value() && *kelvin > 0.0f) {
+                if (kelvin.has_value() && std::isfinite(*kelvin) && *kelvin > 0.0f) {
                     call.set_color_temperature(1000000.0f / *kelvin);
                 }
                 call.perform();

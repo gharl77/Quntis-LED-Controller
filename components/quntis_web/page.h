@@ -170,8 +170,12 @@ function render(s){
  if(wasScanning&&!scanning)nets();
  wasScanning=scanning;scanLabel();
 }
-// A hidden tab does not poll, which spares the ESP32 and the network.
-async function poll(){if(document.hidden)return;try{render(await(await fetch('/api/state')).json())}catch(e){}}
+// A hidden tab does not poll, which spares the ESP32 and the network. A slow answer is not asked again
+// while it is on its way, so requests do not pile up on the ESP32.
+let polling=false;
+async function poll(){if(document.hidden||polling)return;polling=true;
+ try{render(await(await fetch('/api/state',{signal:AbortSignal.timeout?AbortSignal.timeout(5000):undefined})).json())}catch(e){}
+ polling=false}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});
 function showNets(){
  const ul=$('nets');ul.replaceChildren();

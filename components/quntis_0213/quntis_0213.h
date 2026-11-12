@@ -60,6 +60,8 @@ namespace esphome {
             void set_auto_temperature(bool on);
             bool get_auto_temperature() const { return auto_temp_on_; }
             bool has_clock() const;
+            // False while the nRF24L01 does not answer, at boot or after a loose wire.
+            bool is_radio_ok() const { return radio_ok_; }
 #ifdef USE_TIME
             void set_time(time::RealTimeClock* clock) { clock_ = clock; }
 #endif
@@ -80,6 +82,8 @@ namespace esphome {
             uint8_t get_min_level() const { return min_level_; }
 
            protected:
+            bool configure_radio_();
+            void check_radio_();
             void apply_state_();
             // Queues a command. Its packet is built when it goes out, from the latest state.
             void send_(uint8_t command);
@@ -104,6 +108,8 @@ namespace esphome {
             std::vector<uint8_t> device_id_;
             std::vector<RemoteTrigger*> remote_triggers_;
             RF24* radio_{nullptr};
+            bool radio_ok_{false};
+            uint32_t radio_check_ms_{0};
             light::LightState* state_{nullptr};
             ESPPreferenceObject remote_pref_;
             ESPPreferenceObject state_pref_;

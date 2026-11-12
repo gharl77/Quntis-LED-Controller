@@ -47,6 +47,14 @@ int main() {
         check(!decode(corrupted, data), "a changed bit is rejected");
     }
 
+    // What a radio that stopped answering returns.
+    uint8_t silent[PACKET_LENGTH];
+    uint8_t ignored[DATA_LENGTH];
+    std::memset(silent, 0x00, PACKET_LENGTH);
+    check(!decode(silent, ignored), "a packet of 00 bytes is rejected");
+    std::memset(silent, 0xFF, PACKET_LENGTH);
+    check(!decode(silent, ignored), "a packet of FF bytes is rejected");
+
     const uint8_t address[5] = {0x04, 0x29, 0x14, 0xAB, 0x2F};
     const uint8_t data[10] = {0x83, 0x6F, 0x64, 0x11, 0x35, 0x80, 0x47, 0xFF, 0x00, 0x2A};
     uint8_t packet[PACKET_LENGTH];

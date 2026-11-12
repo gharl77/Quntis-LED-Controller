@@ -196,6 +196,8 @@ The radio settings are channel 80 (2480 MHz), 1 Mbps, with the nRF24 CRC disable
 
 The ESP32 sends each command 20 times, 4 ms apart, or 5 times during a fade. It spreads them over a few passes of its main loop, so it stays responsive while sending. A brightness or color temperature step still waiting to go out is merged with the next one, and always carries the latest values.
 
+Every 10 seconds, the ESP32 checks that the nRF24L01+ still answers. If it does not, at startup or after a loose wire, the web page shows it and the ESP32 sets the radio up again as soon as it is back, without a restart.
+
 After the `71 0F 55` sync, the raw packet holds a 5-byte address, 11 data bytes, a 2-byte CRC, then `AF`. To decode a data byte, XOR it with the XN297 scramble table, then reverse its bits.
 
 ```

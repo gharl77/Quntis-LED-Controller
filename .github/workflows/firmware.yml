@@ -35,15 +35,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Pick the version
-        # Year.month.number: the number counts the releases of the month, from 1.
+        # Year.month.number: one more than the month's last release, from 1.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           month="$(date -u +%Y).$((10#$(date -u +%m)))"
-          pattern="^v${month//./\\.}\\.[0-9]+$"
-          count=$(gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
-            | grep -cE "$pattern" || true)
-          echo "VERSION=$month.$((count + 1))" >> "$GITHUB_ENV"
+          last=$(gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
+            | sed -nE "s/^v${month//./\\.}\\.([0-9]+)$/\\1/p" | sort -n | tail -1)
+          echo "VERSION=$month.$((10#${last:-0} + 1))" >> "$GITHUB_ENV"
       - name: Install ESPHome
         run: pip install esphome==2026.10.2
       - name: Build the firmware from this commit
