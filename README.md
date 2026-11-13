@@ -43,6 +43,7 @@ The remote has these controls:
 | Automatic dimming switch | The lamp's automatic dimming |
 | Remote event | One event per press on the remote, to trigger your own automations |
 | Learn the remote button | Pairs the ESP32 with your remote |
+| Resync button | Sends the lamp's whole state again, after a power cut or a missed command |
 | Preset buttons | **Lecture**, **Écran** and **Soir** set a brightness and a color temperature in one press |
 | Timer | Turns the lamp off after a number of minutes. `0` cancels |
 | Time-of-day switch | Makes the light warm at night and cooler in the middle of the day |
@@ -71,15 +72,21 @@ Holding a button for 1.5 seconds also sends the same name with `_long`, such as 
 
 The ESP32 also serves its own page, so the lamp works without Home Assistant. In Home Assistant, the **Visit** link on the device page opens it. You can also open `http://<ESP32 address>/`.
 
-<img src="Images/LI-HY-0213-GY_WebPage.png" alt="The lamp's web page, with its light controls, information and WiFi panel" width="360">
+<img src="Images/LI-HY-0213-GY_WebPage.png" alt="The lamp's web page in English, with its light controls and information" width="300"> <img src="Images/LI-HY-0213-GY_WebPage_WiFi.png" alt="The same page with the Change WiFi panel open, listing nearby networks" width="300">
 
-*The page with sample data. The WiFi and password panels open from the links under Information.*
+*The page with sample data: on the left as it opens, on the right with the Change WiFi panel open.*
+
+<img src="Images/LI-HY-0213-GY_WebPage_Update.png" alt="The Information section when a new firmware is available, with an Install version button" width="300">
+
+*With the ready-made firmware, the page offers a new version when one is published.*
 
 | Section | What it does |
 |---|---|
 | Light | On/off, brightness, color temperature, backlight, automatic dimming, time of day, timer and your presets |
 | Information | Remote status, network, IP address, WiFi signal, radio module status, uptime, free memory, MAC address, firmware and ESPHome versions |
 | Learn the remote | Pairs the next remote heard within 60 seconds |
+| Resync the lamp | Sends the whole state again: power, brightness, color temperature, backlight and automatic dimming. Use it after a power cut, or when the lamp missed a command |
+| Check for an update | Looks for a newer firmware, then offers to install it. Only with the ready-made firmware, which has the update entity |
 | Change WiFi | Scans nearby networks, then saves a new network and password |
 | Change password | Replaces the page's password |
 | Restart | Restarts the ESP32 |
@@ -116,7 +123,7 @@ Keep the module connected for good: it sends the commands to the lamp and hears 
 4. Open the lamp's page, click **Learn the remote**, then press a button on the remote right next to the module.
 5. Add the device in Home Assistant under **Settings → Devices & services**.
 
-Home Assistant then offers each new version of this firmware as an update. This firmware has no page password and no update password, and its backup network uses the public password `quntis1234`. To change them, adopt the device in ESPHome Builder: it imports the configuration from this repository.
+Home Assistant then offers each new version of this firmware as an update. The lamp's own page offers it too, with **Check for an update**, so the firmware can be updated without Home Assistant. This firmware has no page password and no update password, and its backup network uses the public password `quntis1234`. To change them, adopt the device in ESPHome Builder: it imports the configuration from this repository.
 
 ## Manual install
 
@@ -263,7 +270,7 @@ For `<rate>`, use `0` for 1 Mbps, `1` for 2 Mbps or `2` for 250 kbps. To find th
 - **Missed presses:** a press far from the module, or while the ESP32 is sending, may not be heard.
 - **Full state in each packet:** a command also sends the brightness, color temperature and backlight the ESP32 knows about.
 - **Backlight:** this is on or off only, like on the remote.
-- **Not tested:** the backup network, Bluetooth WiFi setup, a full install and update from the installer page, and a second lamp or remote.
+- **Not tested:** the backup network, Bluetooth WiFi setup, a full install and update from the installer page, an update started from the lamp's page, and a second lamp or remote.
 - **Coexistence:** other 2.4 GHz devices may interfere.
 
 ## Credits

@@ -37,6 +37,9 @@ namespace esphome {
             void set_auto_dim(bool on);
             bool get_auto_dim() const { return auto_dim_on_; }
 
+            // Sends the whole known state again, for a lamp that missed a command or lost power.
+            void resync();
+
             // Waits for the next remote packet and keeps its address and ID.
             void start_learning();
             bool is_learning() const { return learning_; }

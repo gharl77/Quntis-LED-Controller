@@ -308,6 +308,19 @@ namespace esphome {
             save_state_();
         }
 
+        void Quntis0213Light::resync() {
+            ESP_LOGI(TAG, "Sending the whole state to the lamp again");
+            // The power command carries the level, color temperature and backlight, and the lamp
+            // leaves automatic dimming on it, so that mode is asked for again after it.
+            bool auto_dim = auto_dim_on_ && sent_on_;
+            send_(COMMAND_POWER);
+            if (auto_dim) {
+                send_(COMMAND_AUTO_DIM_ON);
+            }
+            auto_dim_on_ = auto_dim;
+            save_state_();
+        }
+
         void Quntis0213Light::save_state_() {
             StateSettings settings{backlight_level_, backlight_on_level_, (uint8_t) (auto_dim_on_ ? 1 : 0),
                                    (uint8_t) (auto_temp_on_ ? 1 : 0)};

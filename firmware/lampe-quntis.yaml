@@ -174,6 +174,13 @@ button:
     entity_category: config
     on_press:
       - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->start_learning();'
+  # Sends the whole state again, after a power cut or a missed command.
+  - platform: template
+    name: "Resynchroniser la lampe"
+    icon: mdi:sync
+    entity_category: config
+    on_press:
+      - lambda: 'static_cast<esphome::quntis_0213::Quntis0213Light *>(id(lampe).get_output())->resync();'
   # Presets: buttons without a category also show on the web page.
   - platform: template
     name: "Lecture"

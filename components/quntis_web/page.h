@@ -69,8 +69,8 @@ footer{text-align:center;font-size:14px;color:var(--dim);margin:6px 0 20px}
 
 <section><h2 data-t="information"></h2><dl id="info"></dl>
 <p><a href="#" id="wifiopen" data-t="changeWifi"></a><span id="pwlinkbox" hidden> · <a href="#" id="pwopen" data-t="changePassword"></a></span></p>
-<div style="display:flex;gap:8px;flex-wrap:wrap"><button id="learn" data-t="learn"></button><button id="restart" data-t="restart"></button></div>
-<p class="msg" id="learnmsg" role="status"></p></section>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><button id="learn" data-t="learn"></button><button id="resync" data-t="resync"></button><button id="restart" data-t="restart"></button><button id="update" hidden></button></div>
+<p class="msg" id="learnmsg" role="status"></p><p class="msg" id="actmsg" role="status"></p></section>
 
 <section id="wifipanel" hidden>
 <div class="row"><h2 style="margin:0" data-t="changeWifi"></h2><a href="#" id="wificlose" data-t="close"></a></div>
@@ -111,6 +111,8 @@ learn:'Apprendre la télécommande',learning:'Appuie sur un bouton de la téléc
 confirmLearn:"Apprendre une télécommande ? La prochaine télécommande Quntis entendue remplacera l'actuelle.",
 autoTemp:"Température selon l'heure",timer:'Éteindre dans',timerOff:'Jamais',timerLeft:m=>'(encore '+m+' min)',
 changePassword:'Changer le mot de passe',newPassword:'Nouveau mot de passe (8 caractères ou plus)',confirmPassword:'Confirme le mot de passe',savePassword:'Enregistrer le mot de passe',
+resync:'Resynchroniser la lampe',resynced:"État renvoyé à la lampe.",checkUpdate:'Chercher une mise à jour',checking:'Vérification…',upToDate:'Le firmware est à jour.',
+install:v=>'Installer la version '+v,installing:'Installation… La page revient après environ une minute.',confirmInstall:v=>'Installer la version '+v+" ? L'ESP32 redémarre ensuite.",
 pwMismatch:'Les deux mots de passe ne sont pas identiques.',pwSaved:"Mot de passe changé. Ton navigateur va te le demander, avec l'utilisateur admin."},
 en:{light:'Light',lamp:'Lamp',brightness:'Brightness',temperature:'Color temperature',backlight:'Backlight',autoDim:'Automatic dimming',
 note:"The lamp does not report its state: this page shows the last command sent or heard from the remote. Automatic dimming adjustments and power cuts do not show here.",
@@ -128,6 +130,8 @@ learn:'Learn the remote',learning:'Press a button on the remote, right next to t
 confirmLearn:'Learn a remote? The next Quntis remote heard will replace the current one.',
 autoTemp:'Follow the time of day',timer:'Turn off in',timerOff:'Never',timerLeft:m=>'('+m+' min left)',
 changePassword:'Change password',newPassword:'New password (8 characters or more)',confirmPassword:'Confirm the password',savePassword:'Save the password',
+resync:'Resync the lamp',resynced:'State sent to the lamp again.',checkUpdate:'Check for an update',checking:'Checking…',upToDate:'The firmware is up to date.',
+install:v=>'Install version '+v,installing:'Installing… The page comes back after about a minute.',confirmInstall:v=>'Install version '+v+'? The ESP32 restarts afterwards.',
 pwMismatch:'The two passwords are not the same.',pwSaved:'Password changed. Your browser will ask for it, with the user admin.'}};
 const $=id=>document.getElementById(id);
 let busyUntil=0,wasScanning=false,scanStartUntil=0,lastState=null,lastNets=[],T=TEXT.fr;
@@ -137,7 +141,7 @@ function send(path,params){hold();return post(path,params).catch(()=>{})}
 function bars(r){return r>=-55?T.excellent:r>=-67?T.good:r>=-78?T.fair:T.weak}
 function uptime(s){const d=Math.floor(s/86400),h=Math.floor(s/3600)%24,m=Math.floor(s/60)%60;return(d?d+T.day:'')+(d||h?h+' h ':'')+m+' min'}
 function ago(a){return a<60?a+' s':a<3600?Math.floor(a/60)+' min':Math.floor(a/3600)+' h'}
-let wasLearning=false;
+let wasLearning=false,checkUntil=0;
 // A release looks like 2026.11.2. Other builds show their commit and have no release page.
 function isRelease(v){return /^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$/.test(v||'')}
 function link(text,href){const a=document.createElement('a');a.href=href;a.textContent=text;a.target='_blank';a.rel='noopener noreferrer';return a}
@@ -148,7 +152,7 @@ function setLang(code){
  for(const e of document.querySelectorAll('[data-t]'))e.textContent=T[e.dataset.t];
  for(const e of document.querySelectorAll('[data-a]'))e.setAttribute('aria-label',T[e.dataset.a]);
  for(const e of document.querySelectorAll('[data-p]')){e.placeholder=T[e.dataset.p];e.setAttribute('aria-label',T[e.dataset.p])}
- $('wifimsg').textContent='';scanLabel();if(lastState)render(lastState);showNets();
+ $('wifimsg').textContent='';$('actmsg').textContent='';scanLabel();if(lastState)render(lastState);showNets();
 }
 function render(s){
  lastState=s;$('title').textContent=s.name;document.title=s.name;
@@ -163,6 +167,9 @@ function render(s){
  $('pwlinkbox').hidden=!s.auth;
  $('autotemprow').hidden=!s.clock;$('timerleft').textContent=s.timer?T.timerLeft(s.timer):'';
  if(Date.now()>busyUntil){$('auto_temp').checked=!!s.auto_temp;if(!s.timer)$('timer').value='0'}
+ const u=$('update');u.hidden=!(s.update>=0);u.disabled=s.update===2;u.className=s.update===1?'primary':'';
+ u.textContent=s.update===1?T.install(s.latest):s.update===2?T.installing:T.checkUpdate;
+ if(checkUntil&&(s.update===1||Date.now()>checkUntil)){$('actmsg').textContent=s.update===1?'':T.upToDate;checkUntil=0}
  const lm=$('learnmsg');$('learn').disabled=!!s.learning;
  if(s.learning){lm.className='msg';lm.textContent=T.learning}else if(wasLearning){lm.textContent=s.remote?T.learned:''}
  wasLearning=!!s.learning;
@@ -217,6 +224,10 @@ $('pwform').onsubmit=async e=>{e.preventDefault();
  try{const r=await post('/api/password',{password:a});if(!r.ok)throw 0;$('pw1').value=$('pw2').value='';m.className='msg';m.textContent=T.pwSaved}
  catch(err){m.textContent=T.refused}};
 $('learn').onclick=()=>{if(confirm(T.confirmLearn)){$('learn').disabled=true;$('learnmsg').textContent=T.learning;post('/api/learn').catch(()=>{})}};
+$('resync').onclick=()=>{post('/api/resync').then(r=>{if(r.ok)$('actmsg').textContent=T.resynced}).catch(()=>{})};
+$('update').onclick=()=>{const s=lastState,m=$('actmsg');if(!s)return;
+ if(s.update===1){if(confirm(T.confirmInstall(s.latest))){m.textContent=T.installing;post('/api/update').catch(()=>{})}}
+ else{m.textContent=T.checking;checkUntil=Date.now()+8000;post('/api/update_check').catch(()=>{})}};
 $('restart').onclick=()=>{if(confirm(T.confirmRestart))post('/api/restart').catch(()=>{})};
 $('lang').onchange=e=>{try{localStorage.setItem('lang',e.target.value)}catch(err){}setLang(e.target.value)};
 let saved=null;try{saved=localStorage.getItem('lang')}catch(e){}

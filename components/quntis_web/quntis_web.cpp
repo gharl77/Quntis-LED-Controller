@@ -41,6 +41,16 @@ namespace esphome {
             uint32_t yaml_hash;
         };
 
+#ifdef USE_UPDATE
+        // The firmware update entity, when the configuration has one.
+        static update::UpdateEntity* firmware_update() {
+            for (auto* entity : App.get_updates()) {
+                return entity;
+            }
+            return nullptr;
+        }
+#endif
+
         static void on_scan_done(void*, esp_event_base_t, int32_t, void*) { scan_event_received = true; }
 
         void QuntisWeb::setup() {
@@ -108,13 +118,26 @@ namespace esphome {
             char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
             get_mac_address_pretty_into_buffer(mac);
 
-            char buffer[1280];
+            // -1: no update entity. 0: up to date or not checked. 1: available. 2: installing.
+            int update_state = -1;
+            char escaped_latest[32 * JSON_ESCAPE_MAX_EXPANSION + 1] = "";
+#ifdef USE_UPDATE
+            if (auto* entity = firmware_update()) {
+                update_state = entity->state == update::UPDATE_STATE_AVAILABLE    ? 1
+                               : entity->state == update::UPDATE_STATE_INSTALLING ? 2
+                                                                                  : 0;
+                const std::string& latest = entity->update_info.latest_version;
+                json_escape_into_buffer(escaped_latest, StringRef(latest.c_str(), std::min<size_t>(latest.size(), 32)));
+            }
+#endif
+
+            char buffer[1408];
             snprintf(buffer, sizeof(buffer),
                      "{\"on\":%d,\"brightness\":%d,\"kelvin\":%d,\"backlight\":%d,\"auto_dim\":%d,"
                      "\"radio\":%d,\"channel\":%u,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\","
                      "\"uptime\":%u,\"heap\":%u,\"name\":\"%s\",\"version\":\"%s\",\"scanning\":%d,"
                      "\"remote\":%d,\"learning\":%d,\"remote_age\":%d,\"min\":%d,\"remote_last\":\"%02X %02X %02X %02X\",\"auth\":%d,\"timer\":%u,\"auto_temp\":%d,\"clock\":%d,"
-                     "\"fw\":\"%s\",\"repo\":\"%s\"}",
+                     "\"fw\":\"%s\",\"repo\":\"%s\",\"update\":%d,\"latest\":\"%s\"}",
                      values.is_on(), (int) std::lround(values.get_brightness() * 100.0f),
                      kelvin, output_()->get_backlight(),
                      output_()->get_auto_dim(), output_()->is_radio_ok(), output_()->get_channel(), escaped_ssid,
@@ -125,7 +148,7 @@ namespace esphome {
                      output_()->last_remote_values()[1], output_()->last_remote_values()[2],
                      output_()->last_remote_values()[3], yaml_password_ != nullptr,
                      (unsigned) output_()->get_timer_minutes(), output_()->get_auto_temperature(),
-                     output_()->has_clock(), QUNTIS_VERSION, QUNTIS_REPO_URL);
+                     output_()->has_clock(), QUNTIS_VERSION, QUNTIS_REPO_URL, update_state, escaped_latest);
 
             LockGuard guard(state_lock_);
             state_json_ = buffer;
@@ -252,6 +275,23 @@ namespace esphome {
                 bool on = request->arg("on") == "1";
                 defer([this, on]() { output_()->set_auto_temperature(on); });
                 request->send(200);
+            } else if (url == "/api/resync") {
+                defer([this]() { output_()->resync(); });
+                request->send(200);
+#ifdef USE_UPDATE
+            } else if (url == "/api/update_check" || url == "/api/update") {
+                bool install = url == "/api/update";
+                defer([install]() {
+                    if (auto* entity = firmware_update()) {
+                        if (install) {
+                            entity->perform();
+                        } else {
+                            entity->check();
+                        }
+                    }
+                });
+                request->send(200);
+#endif
             } else if (url == "/api/learn") {
                 defer([this]() { output_()->start_learning(); });
                 request->send(200);
