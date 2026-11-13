@@ -34,7 +34,9 @@ The remote has these controls:
 
 ### In Home Assistant
 
-![The lamp in Home Assistant](Images/LI-HY-0213-GY_HomeAssistant.png)
+![The lamp's device page in Home Assistant, with its controls, configuration buttons, diagnostic sensors and activity](Images/LI-HY-0213-GY_HomeAssistant.png)
+
+*An illustration of the device page with sample data. The entity names are translated: the example configuration names them in French, and you can rename them in the YAML file.*
 
 | Entity | What it does |
 |---|---|
